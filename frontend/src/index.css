@@ -1,0 +1,331 @@
+/* Quanta design system — tokens + base.
+   Light is the deliberate default; dark overrides under :root[data-theme="dark"].
+   The cabinet is the star, so this foundation aims for a clean, modern "glass-box"
+   feel: crisp surfaces, tabular numbers, a spectral indigo→violet accent. */
+
+:root {
+  --bg: #ffffff;
+  --surface: #f7f8fb;
+  --surface-2: #eef1f6;
+  --elevated: #ffffff;
+  --text: #0f1729;
+  --text-muted: #5b6577;
+  --border: #e4e8f0;
+  --accent: #4f46e5;
+  --accent-2: #7c3aed;
+  --accent-contrast: #ffffff;
+  --accent-weak: rgba(79, 70, 229, 0.1);
+  --good: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(15, 23, 41, 0.06), 0 8px 24px rgba(15, 23, 41, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas,
+    monospace;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a0d14;
+  --surface: #11151f;
+  --surface-2: #171c28;
+  --elevated: #141926;
+  --text: #e7eaf1;
+  --text-muted: #8a93a6;
+  --border: #222937;
+  --accent: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-weak: rgba(99, 102, 241, 0.16);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* --- buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.05s;
+}
+.btn:hover {
+  background: var(--surface-2);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+.btn.primary:hover {
+  filter: brightness(1.05);
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- pill / status --- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+.pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill.ok {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 30%, var(--border));
+}
+.pill.down {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 30%, var(--border));
+}
+.pill.checking {
+  color: var(--warn);
+}
+
+/* --- card --- */
+.card {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* --- landing --- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 4px 14px var(--accent-weak);
+}
+.hero {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 96px 28px 60px;
+  text-align: center;
+}
+.hero-eyebrow {
+  display: inline-block;
+  margin-bottom: 20px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-weak);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.hero-title {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0 0 18px;
+}
+.hero-title .grad {
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero-sub {
+  font-size: 1.12rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin: 0 auto 30px;
+  max-width: 620px;
+}
+.chips {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.65rem 1.1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.chip .tag {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.status-row {
+  margin-top: 42px;
+  display: flex;
+  justify-content: center;
+}
+
+/* --- atom background (Quanta particle motif) --- */
+.atom-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 0.5;
+}
+:root[data-theme="dark"] .atom-bg {
+  opacity: 0.65;
+}
+.atom-bg svg {
+  width: min(94vmin, 780px);
+  height: min(94vmin, 780px);
+}
+.atom-bg .orbit-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  opacity: 0.28;
+}
+.atom-bg .electron {
+  fill: var(--accent);
+}
+.atom-bg .electron.alt {
+  fill: var(--accent-2);
+}
+.atom-bg .nucleus-glow {
+  fill: var(--accent);
+  opacity: 0.3;
+}
+.atom-bg .s1 {
+  stop-color: var(--accent);
+}
+.atom-bg .s2 {
+  stop-color: var(--accent-2);
+}
+.atom-bg .spark {
+  fill: var(--accent-2);
+  opacity: 0.5;
+}
+.atom-bg .spark.a {
+  animation: q-drift 9s ease-in-out infinite;
+}
+.atom-bg .spark.b {
+  animation: q-drift 12s ease-in-out infinite reverse;
+}
+.atom-bg .spark.c {
+  animation: q-drift 7s ease-in-out infinite;
+}
+@keyframes q-drift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(6px, -10px);
+  }
+}
+
+/* content sits above the motif */
+.topbar,
+.hero {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atom-bg .spark {
+    animation: none;
+  }
+}

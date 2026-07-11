@@ -1,0 +1,46 @@
+# Quanta — self-hosted deploy (home server behind Cloudflare Tunnel + Caddy).
+# Full pattern mirrors Report/classroom: the network 'web' is EXTERNAL and shared with
+# the host Caddy. Create it once:  docker network create web
+# No project publishes host ports — only the shared Caddy binds :80; each project is
+# reachable by its DNS name inside 'web'.
+#
+# Deploy integration (Phase 6): add the block in deploy/homeserver/quanta.Caddyfile to
+# the host Caddy, then add a Cloudflare Tunnel public hostname
+#   quanta-social.com -> http://caddy:80   (SSL/TLS: Full)
+# on your existing tunnel. If you prefer a dedicated tunnel for this project instead,
+# uncomment the cloudflared service below and set TUNNEL_TOKEN in .env.
+services:
+  quanta-backend:
+    build: ./backend
+    env_file: ./backend/.env
+    # UID:GID that owns ./backend/data so SQLite/alembic can write (avoids
+    # "attempt to write a readonly database"). Check: ls -n ./backend/data
+    user: "1000:1000"
+    restart: unless-stopped
+    volumes:
+      - ./backend/data:/app/data
+    networks:
+      - web
+
+  quanta-frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks:
+      - web
+
+  # Optional dedicated tunnel (only if NOT routing via an existing shared tunnel):
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   container_name: quanta-cloudflared
+  #   command: tunnel --no-autoupdate run
+  #   environment:
+  #     - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+  #   dns: [1.1.1.1, 1.0.0.1]
+  #   restart: unless-stopped
+  #   networks:
+  #     - web
+
+networks:
+  web:
+    external: true
+    name: web

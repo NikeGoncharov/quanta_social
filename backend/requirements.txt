@@ -1,0 +1,25 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-dotenv
+pyyaml
+
+# Database
+sqlalchemy
+alembic
+aiosqlite
+
+# Auth (used from Phase 4). Pin passlib+bcrypt to a known-compatible pair —
+# newer bcrypt (>=4.1) breaks passlib 1.7.4's version probe.
+python-jose[cryptography]
+passlib==1.7.4
+bcrypt==4.0.1
+email-validator
+
+# HTTP client (tests + internal)
+httpx
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov

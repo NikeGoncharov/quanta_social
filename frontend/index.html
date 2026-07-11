@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Quanta — a mock social network with a glass-box programmatic ad cabinet. See exactly how your campaign runs: the auction, the clearing price, the learning phase — live."
+    />
+    <title>Quanta</title>
+    <script>
+      // Set the theme before first paint to avoid a flash (light is the default).
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("quanta.theme") === "dark" ? "dark" : "light";
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

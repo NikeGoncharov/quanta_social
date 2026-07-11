@@ -1,0 +1,13 @@
+# Quanta site block — add to the home server's shared Caddyfile (~/caddy/Caddyfile).
+# TLS terminates at Cloudflare; cloudflared -> Caddy is internal HTTP, so the scheme is
+# http:// (which disables Caddy's automatic ACME).
+http://quanta-social.com, http://www.quanta-social.com {
+	# /api/* -> backend, stripping the /api prefix (backend mounts routers at root).
+	handle_path /api/* {
+		# Caddy streams reverse_proxy responses (no response buffering), so the SSE
+		# endpoint /api/stream flushes to the client in real time. Keep it that way.
+		reverse_proxy quanta-backend:8000
+	}
+	# Everything else -> the SPA (nginx).
+	reverse_proxy quanta-frontend:80
+}

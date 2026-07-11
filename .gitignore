@@ -18,7 +18,8 @@ node_modules/
 dist/
 .vite/
 
-# Editor / OS
+# Local tooling / editor / OS
+.claude/
 .DS_Store
 .idea/
 .vscode/

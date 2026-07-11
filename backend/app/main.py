@@ -11,6 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import FRONTEND_URL
 from app.database import init_db
+from app.adsim.world import load_world
+from app.sim.runtime import SimRuntime
+from app.sim.seed import seed_lines
+from app.sim import routes as sim_routes
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("quanta")
@@ -19,10 +23,18 @@ log = logging.getLogger("quanta")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # Phase 2+: seed world.yaml, start the real-time simulation world loop here.
-    log.info("Quanta backend started")
-    yield
-    # Phase 2+: stop the simulation world loop here.
+    # Build the world + seed campaigns, then start the single real-time world loop. The
+    # loop is viewer-gated, so it stays idle until the cabinet opens an SSE stream.
+    world = load_world()
+    runtime = SimRuntime(world, seed_lines())
+    app.state.runtime = runtime
+    await runtime.start()
+    log.info("Quanta backend started; world loop running")
+    try:
+        yield
+    finally:
+        await runtime.stop()
+        log.info("Quanta backend stopped; world loop halted")
 
 
 app = FastAPI(
@@ -34,7 +46,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", FRONTEND_URL],
+    allow_origins=[
+        "http://localhost:5173", "http://localhost:5175", "http://localhost:3000", FRONTEND_URL,
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,6 +56,7 @@ app.add_middleware(
 
 # Routers are mounted here as phases land:
 #   auth · social(profiles/posts/messages) · cabinet(...) · sim(control/inspector/demo) · stream
+app.include_router(sim_routes.router)
 
 
 @app.get("/health")

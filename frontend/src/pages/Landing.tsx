@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
 import { ThemeToggle } from "../app/ThemeToggle";
@@ -49,15 +50,20 @@ export default function Landing() {
           a campaign and watch every bid request, clearing price, and learning phase
           unfold in the open. No more flying by instruments.
         </p>
+        <div className="cta-row">
+          <Link to="/cabinet" className="btn primary lg">
+            Open the live lab →
+          </Link>
+        </div>
         <div className="chips">
           <span className="chip">
+            <span className="tag">live</span> Real-time delivery
+          </span>
+          <span className="chip">
+            <span className="tag">live</span> RTB inspector
+          </span>
+          <span className="chip">
             <span className="tag">soon</span> News feed
-          </span>
-          <span className="chip">
-            <span className="tag">soon</span> Quanta Ads cabinet
-          </span>
-          <span className="chip">
-            <span className="tag">soon</span> RTB inspector
           </span>
         </div>
         <div className="status-row">

@@ -12,6 +12,32 @@ async def test_status_shape(sim_client):
     assert {"ad_id", "brand", "objective", "daily_budget", "spent_today"} <= line.keys()
 
 
+async def test_status_market_signals(sim_client):
+    """The dashboard's dynamic market signals: a global market block plus, per line, the
+    avg niche bid vs our eCPM, an estimated win rate, and today's realized funnel."""
+    ac, rt = sim_client
+    body = (await ac.get("/sim/status")).json()
+
+    market = body["market"]
+    assert market["avg_bid"] > 0
+    assert market["density"] == body["market_density"]
+    assert market["auction_type"] in (1, 2)
+    assert market["seats"], "phantom competitor seats should be named"
+
+    delivered = [l for l in body["lines"] if l["impressions_today"] > 0]
+    assert delivered, "24 pre-stepped ticks should have delivered something"
+    for line in body["lines"]:
+        m = line["market"]
+        assert m["niche_bid"] > 0 and m["our_bid"] > 0
+        assert 0.0 <= m["win_rate"] <= 1.0
+        assert m["segments"] > 0 and m["reach"] > 0
+        assert line["result_label"] and line["cost_label"]
+        assert line["clicks_today"] <= line["impressions_today"]
+    for line in delivered:
+        assert line["avg_cpm"] and line["avg_cpm"] > 0
+        assert line["ctr"] is not None
+
+
 async def test_status_503_without_runtime(client):
     r = await client.get("/sim/status")
     assert r.status_code == 503

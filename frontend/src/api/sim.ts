@@ -1,6 +1,15 @@
 // Typed client for the Quanta Ads sim + RTB inspector API (Phase 2).
 import { req } from "./client";
 
+export interface LineMarket {
+  niche_bid: number; // avg competitor bid (eCPM) across the line's targeted niche, now
+  our_bid: number; // our effective eCPM entering those auctions, now
+  win_rate: number; // est. share of auctions we'd win at these bids
+  est_cpm: number | null; // expected paid CPM on wins
+  segments: number;
+  reach: number;
+}
+
 export interface LineStatus {
   ad_id: string;
   campaign_id: string;
@@ -15,6 +24,25 @@ export interface LineStatus {
   in_learning: boolean | null;
   signal: number | null;
   signal_to_exit: number | null;
+  auctions_today: number;
+  impressions_today: number;
+  clicks_today: number;
+  conversions_today: number;
+  ctr: number | null;
+  avg_cpm: number | null;
+  results: number;
+  result_label: string;
+  cost_per_result: number | null;
+  cost_label: string;
+  market: LineMarket;
+}
+
+export interface MarketStatus {
+  density: number;
+  avg_bid: number;
+  floor: number;
+  auction_type: number;
+  seats: string[];
 }
 
 export interface SimStatus {
@@ -27,6 +55,7 @@ export interface SimStatus {
   sim_day: number;
   sim_clock: string;
   market_density: number;
+  market: MarketStatus;
   lines: LineStatus[];
 }
 

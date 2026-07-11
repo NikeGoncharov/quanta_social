@@ -52,8 +52,9 @@ async def save_control(session, *, running, speed, tick_hz, sim_time, market_den
 
 # --- delivery buckets --------------------------------------------------------
 async def upsert_buckets(session, rows: list[dict]) -> None:
-    """Write completed buckets. A bucket is flushed once its sim-minute has fully elapsed,
-    so DO UPDATE simply replaces (idempotent across a restart mid-flush)."""
+    """Write delivery buckets. Completed buckets are final; the current in-progress bucket
+    is REPLACE-rewritten with growing totals every flush (never re-entered after a restart —
+    the runtime resumes at the NEXT whole sim-minute), so DO UPDATE simply replaces."""
     if not rows:
         return
     stmt = sqlite_insert(DeliveryBucket).values(rows)
@@ -83,6 +84,21 @@ async def read_delivery(session, *, window: int = 180, campaign_id: str | None =
     )
     rows = (await session.execute(q)).all()
     return [dict(r._mapping) for r in reversed(rows)]
+
+
+async def today_totals_by_ad(session, *, day_start: int, day_end: int) -> list[dict]:
+    """Per-ad delivery totals for buckets in [day_start, day_end) sim-minutes — rehydrates
+    the runtime's per-line 'today' counters after a restart."""
+    q = (
+        select(
+            DeliveryBucket.ad_id,
+            *[func.sum(getattr(DeliveryBucket, m)).label(m) for m in _BUCKET_METRICS],
+        )
+        .where(DeliveryBucket.bucket_start >= day_start, DeliveryBucket.bucket_start < day_end)
+        .group_by(DeliveryBucket.ad_id)
+    )
+    rows = (await session.execute(q)).all()
+    return [dict(r._mapping) for r in rows]
 
 
 # --- state mirrors -----------------------------------------------------------

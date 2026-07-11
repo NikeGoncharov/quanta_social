@@ -70,6 +70,9 @@ a:hover {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
+.muted {
+  color: var(--text-muted);
+}
 
 /* --- buttons --- */
 .btn {
@@ -343,18 +346,21 @@ a:hover {
 }
 
 /* ===================================================================== */
-/* Quanta Ads — Live lab (Phase 2 glass-box cabinet)                     */
+/* Quanta Ads — Live lab (glass-box cabinet, full-width dashboard)       */
 /* ===================================================================== */
 .lab {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 18px 24px 64px;
+  /* A real dashboard: desktop users, use the whole screen. */
+  width: 100%;
+  padding: 18px 32px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 .lab-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 0 20px;
+  padding: 6px 0 2px;
 }
 .lab-top .brand {
   color: var(--text);
@@ -365,8 +371,15 @@ a:hover {
   align-items: center;
   gap: 12px;
 }
+.lab-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
 .lab-intro {
-  margin: 6px 0 22px;
+  margin: 0;
 }
 .lab-title {
   font-size: clamp(1.6rem, 3vw, 2.1rem);
@@ -380,22 +393,385 @@ a:hover {
   margin: 0;
 }
 
-.lab-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 18px;
-  align-items: start;
-}
-.lab-main {
+/* --- control strip --- */
+.controls-strip {
   display: flex;
-  flex-direction: column;
-  gap: 18px;
-  min-width: 0;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
 }
-@media (max-width: 940px) {
-  .lab-grid {
+
+/* --- KPI tiles --- */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 1500px) {
+  .kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  /* The fixed-width sparkline column would overlap the label/value in 2-up tiles. */
+  .kpis {
     grid-template-columns: 1fr;
   }
+}
+.kpi {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+.kpi-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.kpi-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.kpi-value {
+  font-size: 1.42rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.kpi-delta {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.kpi-delta.good {
+  color: var(--good);
+}
+.kpi-delta.bad {
+  color: var(--bad);
+}
+.kpi-delta.flat {
+  color: var(--text-muted);
+}
+.kpi-delta.na {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.kpi-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex: none;
+}
+.kpi-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  box-shadow: 0 4px 12px var(--accent-weak);
+}
+.kpi-icon svg {
+  width: 17px;
+  height: 17px;
+}
+.spark {
+  width: 84px;
+  height: 30px;
+  overflow: visible;
+}
+.spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.spark-fill {
+  fill: var(--accent);
+  opacity: 0.12;
+}
+
+/* --- main dashboard row: chart + market pulse --- */
+.dash-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+@media (max-width: 1100px) {
+  .dash-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- market pulse --- */
+.pulse-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.pulse-big {
+  display: block;
+  font-size: 1.9rem;
+  font-weight: 780;
+  letter-spacing: -0.02em;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.pulse-cap {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.pulse-floor {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding-bottom: 4px;
+}
+.pulse .knob {
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.pulse-lines {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pulse-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.pulse-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lg-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+.lg-dot.ours {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+.lg-dot.market {
+  background: var(--text-muted);
+  opacity: 0.55;
+}
+.pulse-line-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.pulse-brand {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.pulse-nums {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.pulse-nums em {
+  font-style: normal;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.duo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.duo-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  min-width: 2px;
+  transition: width 0.5s ease;
+}
+.duo-bar.ours {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+.duo-bar.market {
+  background: var(--text-muted);
+  opacity: 0.4;
+}
+.pulse-seats {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.pulse-seats-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.pulse-seat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* --- campaign table --- */
+.ctable-scroll {
+  overflow-x: auto;
+}
+.ctable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 1080px;
+}
+.ctable th {
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.ctable th.num {
+  text-align: right;
+}
+.ctable td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.ctable tbody tr:last-child td {
+  border-bottom: none;
+}
+.ctable tbody tr:hover td {
+  background: var(--surface);
+}
+.ctable td.num {
+  text-align: right;
+  font-weight: 600;
+}
+.row-camp {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.row-brand {
+  font-weight: 700;
+}
+.row-name {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+.row-chips {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.row-status.good {
+  color: var(--good);
+}
+.row-status.warn {
+  color: var(--warn);
+}
+.row-status.bad {
+  color: var(--bad);
+}
+.col-budget {
+  min-width: 150px;
+}
+.result-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.result-num {
+  font-weight: 700;
+}
+.result-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.bidcell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.bidcell em {
+  font-style: normal;
+  font-weight: 500;
+}
+.bid-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  width: fit-content;
+}
+.bid-badge.above {
+  color: var(--good);
+}
+.bid-badge.below {
+  color: var(--warn);
+}
+.wr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 110px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.wr-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.wr-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.5s ease;
 }
 
 /* --- generic panel --- */
@@ -451,12 +827,6 @@ a:hover {
 }
 
 /* --- controls --- */
-.controls-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
 .clock {
   display: flex;
   align-items: center;
@@ -501,8 +871,13 @@ a:hover {
 }
 
 /* --- delivery chart --- */
+.chart-card {
+  display: flex;
+  flex-direction: column;
+}
 .chart-wrap {
-  height: 260px;
+  flex: 1;
+  min-height: 300px;
 }
 .chart-empty {
   height: 100%;
@@ -512,33 +887,7 @@ a:hover {
   font-size: 0.9rem;
 }
 
-/* --- campaign roster --- */
-.line-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.line-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  background: var(--surface);
-}
-.line-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.line-brand {
-  font-weight: 700;
-}
-.line-chips {
-  display: inline-flex;
-  gap: 5px;
-  flex-wrap: wrap;
-}
+/* --- shared chips / budget / spinner --- */
 .mini-chip {
   font-size: 0.68rem;
   font-weight: 700;
@@ -577,24 +926,6 @@ a:hover {
 }
 .budget-nums .muted {
   color: var(--text-muted);
-}
-.tag-bad {
-  margin-left: auto;
-  color: var(--bad);
-  font-weight: 700;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-}
-.learn {
-  margin-top: 10px;
-  font-size: 0.8rem;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--warn);
-}
-.learn.done {
-  color: var(--good);
 }
 .spinner-dot {
   width: 8px;

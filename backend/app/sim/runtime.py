@@ -13,14 +13,19 @@ test can bind a temp database and drive `step_once()` / `flush()` by hand — no
 import asyncio
 import json
 import logging
-import math
 import random
 from dataclasses import dataclass, field, replace
 
+from ..adsim.dsp.strategy import effective_bid_micros
 from ..adsim.dsp.targeting import is_interest_relevant, matching_segments
-from ..adsim.mathx import clamp
+from ..adsim.mathx import clamp, cpm_paid_first_price, cpm_paid_second_price, win_rate
 from ..adsim.materialize import sampled_auction
-from ..adsim.models.enums import FUNNEL_STAGE, LEARNING_OBJECTIVES
+from ..adsim.models.enums import (
+    FUNNEL_STAGE,
+    LEARNING_OBJECTIVES,
+    AuctionType,
+    Objective,
+)
 from ..adsim.money import micros_to_usd
 from ..adsim.simulation import segment_model as sm
 from ..adsim.simulation.delivery import run_tick
@@ -38,10 +43,12 @@ SAMPLE_EVERY_N_TICKS = 3
 SAMPLE_RING = 200
 QUEUE_MAX = 256
 SECONDS_PER_SIM_DAY = 86_400
+MINUTES_PER_SIM_DAY = 1_440
 # On a fresh world, start the clock mid-morning so even-paced campaigns deliver immediately
 # (even pacing gates spend to the day's elapsed fraction — starting at 00:00 looks dead).
 DEFAULT_START_SIM_TIME = 8 * 3600
 BUCKET_METRICS = ("auctions", "impressions", "clicks", "conversions", "spend_micros", "revenue_micros")
+TODAY_KEYS = ("auctions", "impressions", "clicks", "conversions")
 
 
 @dataclass
@@ -122,6 +129,11 @@ class SimRuntime:
 
         self.tick_index = 0
         self._accum: dict[tuple[str, int], BucketAccum] = {}
+        # Per-line counters for the CURRENT sim-day (ad_id -> {auctions, impressions, ...}).
+        # Feeds the cabinet's realized CTR / avg CPM / cost-per-result; reset on day roll and
+        # rehydrated from delivery buckets on restart (like spend).
+        self._today: dict[str, dict[str, int]] = {}
+        self._today_day = 0
         self._pending_samples: list[dict] = []
         self._sample_seq = 0
         self._rng = random.Random()
@@ -232,12 +244,15 @@ class SimRuntime:
                 await persistence.save_control(s, **self._control_kwargs())
                 await s.commit()
                 self.state.roll_to_day(self.sim_day)
+                self._today_day = self.sim_day
             else:
                 self.control = Control(**existing)
-                # Resume at the next whole sim-minute so no post-restart tick re-enters an
+                # Resume at the NEXT whole sim-minute so no post-restart tick re-enters an
                 # already-flushed bucket (upsert is REPLACE, not add — it would drop the
-                # pre-restart partial minute).
-                self.control.sim_time = math.ceil(self.control.sim_time / 60.0) * 60.0
+                # pre-restart delivery). Strictly advance: ceil() would no-op when the
+                # persisted sim_time already sits exactly on a minute boundary (which the
+                # default 30-sim-sec ticks hit every other tick), re-entering the bucket.
+                self.control.sim_time = (int(self.control.sim_time // 60.0) + 1) * 60.0
                 # Establish the sim-day, then rehydrate running state from the DB mirrors so
                 # spend/learning don't reset (which would let a day's budget be re-spent).
                 self.state.roll_to_day(self.sim_day)
@@ -255,6 +270,13 @@ class SimRuntime:
                 self.state.spent_today_micros[b["ad_id"]] = b["spent_today_micros"]
         for lrow in await persistence.load_learning_states(session):
             self.state.learning_signal[lrow["ad_set_id"]] = lrow["accumulated_signal"]
+        # Per-line 'today' counters come straight from the day's flushed buckets.
+        day_start = day * MINUTES_PER_SIM_DAY
+        for row in await persistence.today_totals_by_ad(
+            session, day_start=day_start, day_end=day_start + MINUTES_PER_SIM_DAY
+        ):
+            self._today[row["ad_id"]] = {m: int(row[m] or 0) for m in TODAY_KEYS}
+        self._today_day = day
 
     # --- the tick ------------------------------------------------------------
     def step_once(self) -> list:
@@ -264,6 +286,9 @@ class SimRuntime:
         spt = self._sim_seconds_per_tick()
         self.control.sim_time += spt
         self.state.roll_to_day(self.sim_day)
+        if self._today_day != self.sim_day:
+            self._today = {}
+            self._today_day = self.sim_day
 
         deltas = run_tick(
             self.world, self.lines, self.state,
@@ -278,6 +303,9 @@ class SimRuntime:
                 acc = BucketAccum(d.ad_id, d.ad_set_id, d.campaign_id, d.account_id, bucket)
                 self._accum[key] = acc
             acc.add(d)
+            today = self._today.setdefault(d.ad_id, dict.fromkeys(TODAY_KEYS, 0))
+            for m in TODAY_KEYS:
+                today[m] += getattr(d, m)
 
         if self.tick_index % SAMPLE_EVERY_N_TICKS == 0:
             sample = self._capture_sample()
@@ -354,8 +382,15 @@ class SimRuntime:
 
     # --- flush (the only writer) --------------------------------------------
     async def flush(self, final: bool = False) -> None:
+        # Write EVERY accumulator — including the current in-progress minute — in the same
+        # transaction as the budget/learning mirrors, so after any crash the buckets and the
+        # mirrors cover the exact same tick range (spend without its impressions would skew
+        # avg CPM / cost-per-result after rehydration). The in-progress bucket is REPLACE-
+        # rewritten with larger totals each flush (idempotent; the SSE point for the same
+        # sim-minute replaces client-side), so only completed buckets are dropped from memory.
         current = self._current_bucket()
-        keys = list(self._accum) if final else [k for k in self._accum if k[1] < current]
+        keys = list(self._accum)
+        drop = keys if final else [k for k in keys if k[1] < current]
         # Read (do NOT pop) the accumulators + snapshot the pending samples, so an exception
         # anywhere in the write leaves in-memory state intact to retry on the next flush.
         points: dict[int, dict] = {}
@@ -378,8 +413,9 @@ class SimRuntime:
             await persistence.save_control(s, **self._control_kwargs())
             await s.commit()
 
-        # Commit succeeded — now it is safe to drop what we persisted.
-        for k in keys:
+        # Commit succeeded — now it is safe to drop the COMPLETED buckets (the in-progress
+        # one keeps accumulating in memory and will be REPLACE-rewritten next flush).
+        for k in drop:
             self._accum.pop(k, None)
         del self._pending_samples[: len(samples)]
 
@@ -481,15 +517,109 @@ class SimRuntime:
             "sim_day": self.sim_day,
             "sim_clock": self.sim_clock(),
             "market_density": self.control.market_density,
+            "market": self._market_status(),
             "lines": [self._line_status(ln) for ln in self.lines],
+        }
+
+    def _market_status(self) -> dict:
+        """The market as a whole, right now: the opportunity-weighted average competitor bid
+        across every niche (scaled by the live density), plus who is bidding against you."""
+        segs = self.world.segment_list()
+        total_w = sum(s.opportunity_rate for s in segs)
+        avg_ref = (
+            sum(s.reference_bid_micros * s.opportunity_rate for s in segs) / total_w
+            if total_w > 0
+            else 0.0
+        )
+        return {
+            "density": self.world.economy.market_density,
+            "avg_bid": round(micros_to_usd(avg_ref * self.world.economy.market_density), 2),
+            "floor": round(micros_to_usd(self.world.economy.default_floor_micros), 2),
+            "auction_type": self.world.economy.auction_type,
+            "seats": [ps.name for ps in self.world.phantom_seats],
+        }
+
+    def _line_market(self, ln) -> dict:
+        """The line's competitive position right now, computed with the SAME functions
+        run_tick bids with (expectation-only, no draws) — the glass-box signal IS the
+        mechanics: avg niche bid vs our eCPM, the est. share of auctions we'd win, and the
+        CPM we'd expect to pay on wins."""
+        eco = self.world.economy
+        density = eco.market_density
+        floor = eco.default_floor_micros
+        at = AuctionType(eco.auction_type)
+        if ln.objective in LEARNING_OBJECTIVES:
+            lift = learning_lift(
+                self.state.learning_signal.get(ln.ad_set_id, 0.0), self.world.learning, None
+            )
+        else:
+            lift = 1.0
+
+        segs = matching_segments(ln.targeting, self.world)
+        total_w = ref_acc = bid_acc = wr_acc = cpm_acc = 0.0
+        reach = 0
+        for seg in segs:
+            relevant = is_interest_relevant(ln.targeting, seg)
+            cum_imp = self.state.cum_impressions.get((ln.ad_id, seg.id), 0)
+            ctr = sm.effective_ctr(seg, relevant, cum_imp, self.world)
+            cvr = sm.effective_cvr(seg, relevant, lift, self.world)
+            ebid = effective_bid_micros(ln, ctr, cvr)
+            ref = int(seg.reference_bid_micros * density)
+            wr = win_rate(ebid, ref) if ebid >= floor else 0.0
+            cpm = (
+                cpm_paid_first_price(ebid)
+                if at == AuctionType.FIRST_PRICE
+                else cpm_paid_second_price(ebid, ref, wr)
+            )
+            w = seg.opportunity_rate
+            total_w += w
+            ref_acc += ref * w
+            bid_acc += ebid * w
+            wr_acc += wr * w
+            cpm_acc += max(cpm, floor) * wr * w  # paid CPM only matters on wins
+            reach += seg.size
+
+        if total_w <= 0:
+            return {
+                "niche_bid": 0.0, "our_bid": 0.0, "win_rate": 0.0,
+                "est_cpm": None, "segments": 0, "reach": 0,
+            }
+        return {
+            "niche_bid": round(micros_to_usd(ref_acc / total_w), 2),
+            "our_bid": round(micros_to_usd(bid_acc / total_w), 2),
+            "win_rate": round(wr_acc / total_w, 4),
+            "est_cpm": round(micros_to_usd(cpm_acc / wr_acc), 2) if wr_acc > 0 else None,
+            "segments": len(segs),
+            "reach": reach,
         }
 
     def _line_status(self, ln) -> dict:
         label = LINE_LABELS.get(ln.ad_id, {})
         budget = ln.daily_budget_micros
         spent = self.state.spent_today_micros.get(ln.ad_id, 0)
+        spent_usd = micros_to_usd(spent)
         is_learning_obj = ln.objective in LEARNING_OBJECTIVES
         sig = self.state.learning_signal.get(ln.ad_set_id, 0.0)
+
+        today = self._today.get(ln.ad_id) or {}
+        imps = today.get("impressions", 0)
+        clicks = today.get("clicks", 0)
+        convs = today.get("conversions", 0)
+
+        # The objective decides what a "result" is and how its cost reads.
+        if ln.objective == Objective.AWARENESS:
+            results, result_label, cost_label = imps, "impressions", "CPM"
+            cost = round(spent_usd * 1000 / imps, 2) if imps else None
+        elif ln.objective == Objective.TRAFFIC:
+            results, result_label, cost_label = clicks, "clicks", "CPC"
+            cost = round(spent_usd / clicks, 2) if clicks else None
+        elif ln.objective == Objective.ENGAGEMENT:
+            results, result_label, cost_label = clicks, "engagements", "cost/eng."
+            cost = round(spent_usd / clicks, 2) if clicks else None
+        else:
+            results, result_label, cost_label = convs, "conversions", "CPA"
+            cost = round(spent_usd / convs, 2) if convs else None
+
         return {
             "ad_id": ln.ad_id,
             "campaign_id": ln.campaign_id,
@@ -499,11 +629,22 @@ class SimRuntime:
             "funnel_stage": FUNNEL_STAGE.get(ln.objective),
             "pacing": ln.pacing.value,
             "daily_budget": round(micros_to_usd(budget), 2),
-            "spent_today": round(micros_to_usd(spent), 2),
+            "spent_today": round(spent_usd, 2),
             "budget_util": round(spent / budget, 4) if budget else None,
             "in_learning": in_learning(sig, self.world.learning) if is_learning_obj else None,
             "signal": round(sig, 1) if is_learning_obj else None,
             "signal_to_exit": round(signal_to_exit(sig, self.world.learning), 1) if is_learning_obj else None,
+            "auctions_today": today.get("auctions", 0),
+            "impressions_today": imps,
+            "clicks_today": clicks,
+            "conversions_today": convs,
+            "ctr": round(clicks / imps, 4) if imps else None,
+            "avg_cpm": round(spent_usd * 1000 / imps, 2) if imps else None,
+            "results": results,
+            "result_label": result_label,
+            "cost_per_result": cost,
+            "cost_label": cost_label,
+            "market": self._line_market(ln),
         }
 
     async def snapshot(self, *, window: int = 180) -> dict:

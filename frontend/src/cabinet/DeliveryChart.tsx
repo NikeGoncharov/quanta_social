@@ -11,13 +11,14 @@ import {
 
 import type { DeliveryPoint } from "../api/sim";
 
-type Metric = "impressions" | "clicks" | "conversions" | "spend";
+type Metric = "impressions" | "clicks" | "conversions" | "spend" | "revenue";
 
 const METRICS: { key: Metric; label: string; money?: boolean }[] = [
   { key: "impressions", label: "Impressions" },
   { key: "clicks", label: "Clicks" },
   { key: "conversions", label: "Conversions" },
   { key: "spend", label: "Spend", money: true },
+  { key: "revenue", label: "Revenue", money: true },
 ];
 
 function clock(t: number): string {

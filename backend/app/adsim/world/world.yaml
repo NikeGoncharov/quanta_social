@@ -1,0 +1,73 @@
+# The synthetic world for Quanta Ads. USD, US-market-ish pricing. Everything here is
+# tunable. Segments are generated as the cross product of interests x geos x age_bands x
+# genders (15 x 5 x 4 x 2 = 600 cells).
+
+population: 2000000          # total addressable synthetic people
+
+economy:
+  currency: USD
+  auction_type: 1           # 1 = first price (Quanta's unified auction), 2 = second price plus
+  default_floor_cpm: 1.0    # USD CPM
+  market_density: 1.0       # live UI knob: global multiplier on competitors' reference bids
+  daily_opportunities: 40000000  # ad slots shown across the world per sim-day
+
+relevance_uplift: 1.6       # CTR/CVR multiplier when a campaign interest-targets a segment
+baseline_conv_value: 60.0   # default AOV (USD) if an advertiser doesn't set their own
+
+# Fresh Conversions/Engagement campaigns ramp from start_lift to target_lift as they
+# accumulate signal toward `threshold` conversions — the visible "learning phase".
+learning:
+  start_lift: 0.6
+  target_lift: 1.5
+  threshold: 50
+  noise: 0.2
+
+# CTR decays once a segment has seen the creative more than free_frequency times/person.
+fatigue:
+  free_frequency: 3.0
+  k: 0.15
+
+# interests — size is a fraction of the population (sums to 1.0). base_ctr is CTR,
+# base_cvr is conversions-per-click, value is the AOV multiplier, reference_cpm is the
+# competitive landscape (contested niches like finance/autos cost more).
+interests:
+  - { id: tech,      size: 0.11, base_ctr: 0.011, base_cvr: 0.035, value: 1.2, reference_cpm: 5.0 }
+  - { id: gaming,    size: 0.09, base_ctr: 0.014, base_cvr: 0.030, value: 0.7, reference_cpm: 4.0 }
+  - { id: finance,   size: 0.05, base_ctr: 0.007, base_cvr: 0.050, value: 3.0, reference_cpm: 9.0 }
+  - { id: fashion,   size: 0.10, base_ctr: 0.012, base_cvr: 0.040, value: 1.1, reference_cpm: 5.5 }
+  - { id: travel,    size: 0.07, base_ctr: 0.010, base_cvr: 0.030, value: 2.2, reference_cpm: 6.0 }
+  - { id: fitness,   size: 0.06, base_ctr: 0.012, base_cvr: 0.038, value: 1.0, reference_cpm: 4.5 }
+  - { id: food,      size: 0.10, base_ctr: 0.013, base_cvr: 0.045, value: 0.5, reference_cpm: 3.0 }
+  - { id: autos,     size: 0.05, base_ctr: 0.008, base_cvr: 0.025, value: 2.8, reference_cpm: 7.5 }
+  - { id: beauty,    size: 0.07, base_ctr: 0.013, base_cvr: 0.045, value: 0.9, reference_cpm: 5.0 }
+  - { id: sports,    size: 0.07, base_ctr: 0.011, base_cvr: 0.030, value: 0.9, reference_cpm: 4.2 }
+  - { id: music,     size: 0.06, base_ctr: 0.012, base_cvr: 0.028, value: 0.6, reference_cpm: 3.2 }
+  - { id: parenting, size: 0.05, base_ctr: 0.010, base_cvr: 0.040, value: 1.3, reference_cpm: 4.0 }
+  - { id: home,      size: 0.05, base_ctr: 0.009, base_cvr: 0.035, value: 1.8, reference_cpm: 4.8 }
+  - { id: pets,      size: 0.04, base_ctr: 0.012, base_cvr: 0.040, value: 0.8, reference_cpm: 3.5 }
+  - { id: education, size: 0.03, base_ctr: 0.009, base_cvr: 0.048, value: 1.6, reference_cpm: 5.2 }
+
+geos:
+  - { id: USA, frac: 0.45, cpm_mult: 1.30 }
+  - { id: GBR, frac: 0.12, cpm_mult: 1.15 }
+  - { id: DEU, frac: 0.13, cpm_mult: 1.05 }
+  - { id: BRA, frac: 0.16, cpm_mult: 0.60 }
+  - { id: IND, frac: 0.14, cpm_mult: 0.40 }
+
+age_bands:
+  - { id: "18-24", frac: 0.28, ctr_mult: 1.15, cvr_mult: 0.85 }
+  - { id: "25-34", frac: 0.34, ctr_mult: 1.00, cvr_mult: 1.10 }
+  - { id: "35-44", frac: 0.22, ctr_mult: 0.90, cvr_mult: 1.15 }
+  - { id: "45+",   frac: 0.16, ctr_mult: 0.80, cvr_mult: 1.00 }
+
+genders:
+  - { id: F, frac: 0.50, value_mult: 1.05 }
+  - { id: M, frac: 0.50, value_mult: 0.95 }
+
+phantom_seats:
+  - { name: "Acme Programmatic", aggressiveness: 1.00 }
+  - { name: "Globex DSP",        aggressiveness: 1.10 }
+  - { name: "Initech Media",     aggressiveness: 0.90 }
+  - { name: "Umbrella Ads",      aggressiveness: 1.05 }
+  - { name: "Hooli Demand",      aggressiveness: 1.20 }
+  - { name: "Stark Trade Desk",  aggressiveness: 0.95 }

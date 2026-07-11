@@ -20,7 +20,9 @@ interface KpiDef {
   label: string;
   icon: ReactNode;
   dir: Dir;
-  // per-window aggregate + per-point series value (for the sparkline)
+  // per-window aggregate + per-point series value (for the sparkline). Sparkline values
+  // for volume metrics are per-minute rates (÷ the bucket's span), so the shape doesn't
+  // jump when the sim speed makes buckets fatter; ratios are scale-free already.
   total: (w: DeliveryPoint[]) => number | null;
   point: (p: DeliveryPoint) => number;
   fmt: (v: number) => string;
@@ -59,14 +61,16 @@ const ICONS = {
   ),
 };
 
+const rate = (p: DeliveryPoint, v: number) => v / (p.span || 1);
+
 const KPIS: KpiDef[] = [
   {
     key: "impressions", label: "Impressions", icon: ICONS.eye, dir: "up-good",
-    total: (w) => sum(w, "impressions"), point: (p) => p.impressions, fmt: fmtCount,
+    total: (w) => sum(w, "impressions"), point: (p) => rate(p, p.impressions), fmt: fmtCount,
   },
   {
     key: "clicks", label: "Clicks", icon: ICONS.cursor, dir: "up-good",
-    total: (w) => sum(w, "clicks"), point: (p) => p.clicks, fmt: fmtCount,
+    total: (w) => sum(w, "clicks"), point: (p) => rate(p, p.clicks), fmt: fmtCount,
   },
   {
     key: "ctr", label: "CTR", icon: ICONS.ratio, dir: "up-good",
@@ -79,11 +83,11 @@ const KPIS: KpiDef[] = [
   },
   {
     key: "conversions", label: "Conversions", icon: ICONS.target, dir: "up-good",
-    total: (w) => sum(w, "conversions"), point: (p) => p.conversions, fmt: fmtCount,
+    total: (w) => sum(w, "conversions"), point: (p) => rate(p, p.conversions), fmt: fmtCount,
   },
   {
     key: "spend", label: "Spend", icon: ICONS.coins, dir: "neutral",
-    total: (w) => sum(w, "spend"), point: (p) => p.spend, fmt: fmtMoney,
+    total: (w) => sum(w, "spend"), point: (p) => rate(p, p.spend), fmt: fmtMoney,
   },
   {
     key: "cpm", label: "Avg CPM", icon: ICONS.gavel, dir: "up-bad",

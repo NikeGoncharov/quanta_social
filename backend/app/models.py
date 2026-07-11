@@ -44,6 +44,10 @@ class DeliveryBucket(Base):
     conversions = Column(Integer, nullable=False, default=0)
     spend_micros = Column(Integer, nullable=False, default=0)
     revenue_micros = Column(Integer, nullable=False, default=0)
+    # Sim-seconds of world time the bucket's ticks actually spanned. At fast sim speeds one
+    # tick covers many minutes and dumps them all into a single bucket, so honest
+    # "per sim-minute" rates must divide by this — NOT assume 60.
+    covered_seconds = Column(Integer, nullable=False, default=60, server_default="60")
     breakdowns = Column(Text, nullable=False, default="{}")  # JSON: {dimension: {value: {...}}}
 
     __table_args__ = (

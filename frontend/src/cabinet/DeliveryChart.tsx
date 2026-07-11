@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -30,6 +30,13 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
   const [metric, setMetric] = useState<Metric>("impressions");
   const active = METRICS.find((m) => m.key === metric)!;
 
+  // Buckets carry raw totals but can span >1 sim-minute at fast sim speeds; divide by the
+  // span so the curve is a true per-minute rate and doesn't "jump" when speed changes.
+  const data = useMemo(
+    () => points.map((p) => ({ t: p.t, v: p[metric] / (p.span || 1) })),
+    [points, metric]
+  );
+
   return (
     <div className="card panel chart-card">
       <div className="panel-head">
@@ -55,7 +62,7 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
           <div className="chart-empty">Waiting for the world to tick…</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+            <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <defs>
                 <linearGradient id="qFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.35} />
@@ -74,7 +81,7 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
                 tick={{ fill: "var(--text-muted)", fontSize: 12 }}
                 stroke="var(--border)"
                 width={52}
-                tickFormatter={(v) => (active.money ? `$${v}` : compact(v))}
+                tickFormatter={(v) => (active.money ? `$${fmtRate(v)}` : compact(v))}
               />
               <Tooltip
                 contentStyle={{
@@ -85,11 +92,14 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
                   fontSize: 13,
                 }}
                 labelFormatter={(t) => `Sim ${clock(Number(t))}`}
-                formatter={(v: number) => [active.money ? `$${v}` : v, active.label]}
+                formatter={(v: number) => [
+                  `${active.money ? "$" : ""}${fmtRate(v)}/min`,
+                  active.label,
+                ]}
               />
               <Area
                 type="monotone"
-                dataKey={metric}
+                dataKey="v"
                 stroke="var(--accent)"
                 strokeWidth={2}
                 fill="url(#qFill)"
@@ -106,5 +116,10 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
 
 function compact(v: number): string {
   if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`;
-  return String(v);
+  return String(Math.round(v * 10) / 10);
+}
+
+function fmtRate(v: number): string {
+  if (v >= 100) return String(Math.round(v));
+  return String(Math.round(v * 100) / 100);
 }

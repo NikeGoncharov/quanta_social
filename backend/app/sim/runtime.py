@@ -104,12 +104,15 @@ class BucketAccum:
 
 
 def to_delivery_point(d: dict) -> dict:
-    """Normalize a raw metric row (counts + micros) into the API/SSE delivery point."""
+    """Normalize a raw metric row (counts + micros) into the API/SSE delivery point.
+    `span` is how many sim-minutes the bucket actually covers (>1 at fast sim speeds) —
+    counts stay raw totals; clients divide by span for honest per-minute rates."""
     def i(k):
         return int(d.get(k) or 0)
 
     return {
         "t": i("t"),
+        "span": round(max(i("covered_seconds"), 1) / 60.0, 2) if d.get("covered_seconds") else 1.0,
         "auctions": i("auctions"),
         "impressions": i("impressions"),
         "clicks": i("clicks"),
@@ -129,6 +132,11 @@ class SimRuntime:
 
         self.tick_index = 0
         self._accum: dict[tuple[str, int], BucketAccum] = {}
+        # Sim-seconds of world time each pending bucket's ticks spanned (a tick attributes
+        # its whole span to the bucket it lands in, mirroring how deltas are attributed).
+        # Written to the bucket rows so clients can compute honest per-minute rates at any
+        # sim speed — at 1 h/s a single bucket carries ~30 minutes of delivery.
+        self._bucket_covered: dict[int, float] = {}
         # Per-line counters for the CURRENT sim-day (ad_id -> {auctions, impressions, ...}).
         # Feeds the cabinet's realized CTR / avg CPM / cost-per-result; reset on day roll and
         # rehydrated from delivery buckets on restart (like spend).
@@ -296,6 +304,7 @@ class SimRuntime:
             tick_index=self.tick_index, seed=WORLD_SEED, stochastic=True,
         )
         bucket = self._current_bucket()
+        self._bucket_covered[bucket] = self._bucket_covered.get(bucket, 0.0) + spt
         for d in deltas:
             key = (d.ad_id, bucket)
             acc = self._accum.get(key)
@@ -397,8 +406,12 @@ class SimRuntime:
         rows: list[dict] = []
         for k in keys:
             acc = self._accum[k]
-            rows.append(acc.to_row())
-            p = points.setdefault(acc.bucket, {"t": acc.bucket, **{m: 0 for m in BUCKET_METRICS}})
+            covered = int(round(self._bucket_covered.get(acc.bucket, 60.0))) or 60
+            rows.append({**acc.to_row(), "covered_seconds": covered})
+            p = points.setdefault(
+                acc.bucket,
+                {"t": acc.bucket, "covered_seconds": covered, **{m: 0 for m in BUCKET_METRICS}},
+            )
             for m in BUCKET_METRICS:
                 p[m] += getattr(acc, m)
         samples = list(self._pending_samples)
@@ -417,6 +430,9 @@ class SimRuntime:
         # one keeps accumulating in memory and will be REPLACE-rewritten next flush).
         for k in drop:
             self._accum.pop(k, None)
+        self._bucket_covered = (
+            {} if final else {b: v for b, v in self._bucket_covered.items() if b >= current}
+        )
         del self._pending_samples[: len(samples)]
 
         for b in sorted(points):

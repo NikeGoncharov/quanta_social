@@ -73,6 +73,9 @@ async def read_delivery(session, *, window: int = 180, campaign_id: str | None =
     `window` buckets, returned ascending in time."""
     q = select(
         DeliveryBucket.bucket_start.label("t"),
+        # The bucket's time span is a world-wide property (all ads share the tick cadence);
+        # MAX tolerates ads that skipped some of the bucket's ticks.
+        func.max(DeliveryBucket.covered_seconds).label("covered_seconds"),
         *[func.sum(getattr(DeliveryBucket, m)).label(m) for m in _BUCKET_METRICS],
     )
     if campaign_id:

@@ -61,6 +61,7 @@ export interface SimStatus {
 
 export interface DeliveryPoint {
   t: number;
+  span: number; // sim-minutes this bucket actually covers (>1 at fast sim speeds)
   auctions: number;
   impressions: number;
   clicks: number;

@@ -269,6 +269,28 @@ async def test_crash_restart_keeps_spend_and_funnel_consistent(temp_session_make
         assert rt2._today.get(ln.ad_id, {}).get("impressions", 0) == today.get(ln.ad_id, {}).get("impressions", 0)
 
 
+async def test_bucket_span_reflects_sim_speed(temp_session_maker):
+    """At fast sim speeds one tick dumps many minutes into a single bucket; the bucket must
+    record how many sim-seconds it actually covers so clients can draw honest per-minute
+    rates (otherwise switching 1 min/s -> 1 h/s makes the chart 'jump' ~30x)."""
+    rt = await _fresh_runtime(temp_session_maker)
+    # Default speed: 4 ticks x 30 sim-sec starting at 28800 -> buckets 480 (one tick),
+    # 481 (two ticks = a fully covered minute), 482 (one tick).
+    for _ in range(4):
+        rt.step_once()
+    await rt.flush(final=True)
+    spans = {p["t"]: p["span"] for p in await rt.delivery_series(window=10)}
+    assert spans.get(481) == 1.0   # fully covered minute
+    assert spans.get(480) == 0.5   # boundary bucket honestly reports half a minute
+
+    # 1 h/s: one tick = 1800 sim-sec, all landing in a single bucket.
+    await rt.apply_control(speed=3600.0)
+    rt.step_once()
+    await rt.flush(final=True)
+    fat = (await rt.delivery_series(window=10))[-1]
+    assert fat["span"] == 30.0  # 1800s / 60 = 30 sim-minutes in one bucket
+
+
 async def test_flush_retains_buckets_on_db_error(sim_runtime, monkeypatch):
     for _ in range(30):
         sim_runtime.step_once()

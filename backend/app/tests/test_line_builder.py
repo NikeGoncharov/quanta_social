@@ -65,4 +65,4 @@ async def test_reseed_is_safe_when_accounts_survive(temp_session_maker):
         await ensure_seed_campaigns(s)  # must not raise on the surviving account PKs
         await s.commit()
         built, _ = await load_lines(s)
-    assert len(built) == 4  # campaigns restored
+    assert len(built) == len(seed_lines())  # every campaign restored

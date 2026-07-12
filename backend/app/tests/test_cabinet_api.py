@@ -41,9 +41,11 @@ async def test_wizard_estimate(cabinet_client):
 
 
 async def test_grid_lists_seeds_with_live_metrics(cabinet_client):
+    from app.sim.seed import seed_lines
+
     ac, _ = cabinet_client
     rows = (await ac.get("/cabinet/grid")).json()["rows"]
-    assert len(rows) == 4  # the four seeds
+    assert len(rows) == len(seed_lines())  # the seed roster
     by_id = {r["campaign_id"]: r for r in rows}
     volt = by_id["seed-voltmatic-cmp"]
     assert volt["status"] == "active" and volt["objective"] == "traffic"

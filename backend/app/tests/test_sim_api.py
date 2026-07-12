@@ -2,12 +2,14 @@
 
 
 async def test_status_shape(sim_client):
+    from app.sim.seed import seed_lines
+
     ac, rt = sim_client
     r = await ac.get("/sim/status")
     assert r.status_code == 200
     body = r.json()
     assert set(["running", "active", "viewers", "speed", "sim_clock", "market_density", "lines"]) <= body.keys()
-    assert len(body["lines"]) == 4
+    assert len(body["lines"]) == len(seed_lines())
     line = body["lines"][0]
     assert {"ad_id", "brand", "objective", "daily_budget", "spent_today"} <= line.keys()
 

@@ -246,20 +246,28 @@ async def logout(response: Response):
     return {"status": "ok"}
 
 
-@router.get("/me")
-async def me(current: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    profile = await db.get(Profile, current.id)
-    interests = json.loads(profile.interests_json) if profile else []
+def public_me(user: User, profile: Profile | None) -> dict:
+    """The `/auth/me` shape — the signed-in identity plus the private targeting signals (geo /
+    age / gender are only ever returned for the user themselves). Shared with the guest-demo
+    endpoint so both return exactly the same object."""
+    interests = json.loads(profile.interests_json) if profile and profile.interests_json else []
     return {
-        "id": current.id,
-        "email": current.email,
-        "handle": current.handle,
-        "display_name": (profile.display_name if profile else current.handle) or current.handle,
-        "avatar_seed": (profile.avatar_seed if profile else current.id) or current.id,
+        "id": user.id,
+        "email": user.email,
+        "handle": user.handle,
+        "display_name": (profile.display_name if profile else user.handle) or user.handle,
+        "avatar_seed": (profile.avatar_seed if profile else user.id) or user.id,
         "bio": profile.bio if profile else "",
         "interests": interests,
         "geo": profile.geo if profile else "",
         "age_band": profile.age_band if profile else "",
         "gender": profile.gender if profile else "",
-        "is_synthetic": current.is_synthetic,
+        "is_synthetic": user.is_synthetic,
+        "is_guest": user.is_guest,
     }
+
+
+@router.get("/me")
+async def me(current: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    profile = await db.get(Profile, current.id)
+    return public_me(current, profile)

@@ -50,3 +50,14 @@ if IS_PRODUCTION and not ALLOWED_REGISTRATION_EMAILS:
     raise RuntimeError(
         "ALLOWED_REGISTRATION_EMAILS must be set in production (registration is invite-only)"
     )
+
+# --- Guest demo mode (Phase 5) -----------------------------------------------
+# A one-click sandbox identity so the public case study can be explored without an invite.
+# Guests are throwaway: a background reaper deletes each guest and everything they authored
+# once it is older than the TTL, so the shared demo never accumulates junk. Registration
+# stays invite-only; the guest path is intentionally separate and creates no email/password.
+GUEST_DEMO_ENABLED = os.getenv("GUEST_DEMO_ENABLED", "true").lower() == "true"
+# A guest older than this is reaped on the next sweep (default 3h — long enough for a session).
+GUEST_TTL_SECONDS = int(os.getenv("GUEST_TTL_SECONDS", str(3 * 60 * 60)))
+# How often the background reaper sweeps for expired guests (default 30 min).
+GUEST_REAP_INTERVAL_SECONDS = int(os.getenv("GUEST_REAP_INTERVAL_SECONDS", str(30 * 60)))

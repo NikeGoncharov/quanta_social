@@ -1,13 +1,17 @@
-"""The seed roster of live campaigns the world loop delivers in Phase 2.
+"""The seed roster of live campaigns the world loop delivers (Phase 3 builds `Line`s from real
+DB rows; this roster is what `ensure_seed_campaigns` materializes on first boot).
 
-Phase 3 builds `Line`s from real DB rows (advertiser_accounts / campaigns / ad_sets / ads);
-until then this fixed roster gives the glass-box something real to show. The four lines are
-chosen to each surface a different lesson in the cabinet:
+The first four lines each surface a different lesson in the cabinet:
 
-  Nimbus   — Conversions, roomy budget   -> the visible *learning phase* ramping up
-  Lumen    — Awareness (CPM), broad       -> steady reach at base rates
-  Voltmatic— Traffic (CPC), ASAP pacing   -> front-loaded delivery
-  Meridian — Conversions, tiny budget     -> the *budget* limiter biting early
+  Nimbus   — Conversions, roomy budget, tech/USA -> the visible *learning phase* ramping up
+  Lumen    — Awareness (CPM), broad               -> steady reach at base rates
+  Voltmatic— Traffic (CPC), ASAP pacing           -> front-loaded delivery
+  Meridian — Conversions, tiny budget             -> the *budget* limiter biting early
+
+Phase 5 adds five more so a visitor of ANY interest, in any geo, sees a relevant sponsored
+auction in their feed (Verdano / Wander / Tempo / Marlowe cover the remaining interests;
+Kinbara is an untargeted broad-reach house line that clears when nothing else does). Only
+Nimbus keeps a single-geo target, so the geo-exclusion lesson still shows in the cabinet.
 
 Brands are deliberately fictional (Acme-style), never real advertisers.
 """
@@ -103,7 +107,8 @@ def seed_lines() -> list[Line]:
             bid_usd=0.85,
             daily_budget_usd=200.0,
             value_usd=30.0,
-            targeting=Targeting(interests=frozenset({"gaming"}), geos=frozenset({"USA", "GBR"})),
+            # Broad geo so a gaming fan anywhere sees it (Nimbus keeps the single-geo lesson).
+            targeting=Targeting(interests=frozenset({"gaming"})),
             creative=NativeCreative(
                 title="Voltmatic: play louder",
                 body="Zero-lag gear for competitive play.",
@@ -121,7 +126,7 @@ def seed_lines() -> list[Line]:
             bid_usd=55.0,
             daily_budget_usd=120.0,
             value_usd=220.0,
-            targeting=Targeting(interests=frozenset({"finance"}), geos=frozenset({"USA"})),
+            targeting=Targeting(interests=frozenset({"finance"})),  # broad geo (see Voltmatic)
             creative=NativeCreative(
                 title="Meridian — banking that keeps up",
                 body="Open an account in minutes.",
@@ -129,6 +134,100 @@ def seed_lines() -> list[Line]:
                 brand_name="Meridian",
                 main_image_key="stock/finance-1.jpg",
                 link_url="https://meridian.example/open",
+            ),
+        ),
+        # --- broader demo coverage (Phase 5) --------------------------------------
+        # The four lines above each teach one lesson but target narrow niches. These five widen
+        # the roster so a visitor of ANY interest, in any geo, sees a relevant sponsored auction
+        # in their feed — the whole point of the demo. Together they cover every world interest;
+        # Kinbara is an untargeted broad-reach line, so there is always at least one eligible bid.
+        _line(
+            slug="verdano",
+            brand="Verdano",
+            objective=Objective.TRAFFIC,
+            bid_usd=0.9,
+            daily_budget_usd=220.0,
+            value_usd=40.0,
+            targeting=Targeting(interests=frozenset({"food", "home", "parenting"})),
+            creative=NativeCreative(
+                title="Verdano — dinner, sorted",
+                body="Fresh boxes, five-ingredient recipes.",
+                cta_text="Try a box",
+                brand_name="Verdano",
+                main_image_key="stock/food-1.jpg",
+                link_url="https://verdano.example",
+            ),
+        ),
+        _line(
+            slug="wander",
+            brand="Wander",
+            objective=Objective.AWARENESS,
+            bid_usd=7.0,
+            daily_budget_usd=260.0,
+            value_usd=55.0,
+            targeting=Targeting(interests=frozenset({"travel", "autos", "sports"})),
+            creative=NativeCreative(
+                title="Wander — go further",
+                body="Gear and guides for the open road.",
+                cta_text="Explore",
+                brand_name="Wander",
+                main_image_key="stock/travel-1.jpg",
+                link_url="https://wander.example",
+            ),
+        ),
+        _line(
+            slug="tempo",
+            brand="Tempo",
+            objective=Objective.ENGAGEMENT,
+            bid_usd=0.6,
+            daily_budget_usd=180.0,
+            value_usd=25.0,
+            targeting=Targeting(interests=frozenset({"fitness", "music", "education"})),
+            creative=NativeCreative(
+                title="Tempo — find your rhythm",
+                body="Classes, tracks and lessons in one app.",
+                cta_text="Start free",
+                brand_name="Tempo",
+                main_image_key="stock/music-1.jpg",
+                link_url="https://tempo.example",
+            ),
+        ),
+        _line(
+            slug="marlowe",
+            brand="Marlowe",
+            objective=Objective.CONVERSIONS,
+            bid_usd=38.0,
+            daily_budget_usd=300.0,
+            value_usd=90.0,
+            targeting=Targeting(interests=frozenset({"fashion", "beauty", "pets"})),
+            creative=NativeCreative(
+                title="Marlowe — everyday, elevated",
+                body="Considered pieces for you and yours.",
+                cta_text="Shop the edit",
+                brand_name="Marlowe",
+                main_image_key="stock/fashion-1.jpg",
+                link_url="https://marlowe.example",
+            ),
+        ),
+        _line(
+            slug="kinbara",
+            brand="Kinbara",
+            objective=Objective.AWARENESS,
+            # A strong house CPM: as the only line eligible for EVERY impression, it needs to clear
+            # typical niche competition so a visitor in a geo/interest no targeted line covers still
+            # sees a sponsored slot (the demo's whole point). Cheap niches see it overpay a little —
+            # that's the honest first-price cost of guaranteed reach, visible in the cabinet.
+            bid_usd=12.0,
+            daily_budget_usd=400.0,
+            value_usd=50.0,
+            targeting=Targeting(),  # no interest / no geo filter -> broad reach, matches everyone
+            creative=NativeCreative(
+                title="Kinbara — quietly everywhere",
+                body="The brand behind the everyday.",
+                cta_text="Discover",
+                brand_name="Kinbara",
+                main_image_key="stock/beauty-1.jpg",
+                link_url="https://kinbara.example",
             ),
         ),
     ]
@@ -140,6 +239,11 @@ LINE_LABELS: dict[str, dict] = {
     "seed-lumen-ad": {"brand": "Lumen", "name": "Lumen awareness"},
     "seed-voltmatic-ad": {"brand": "Voltmatic", "name": "Voltmatic traffic"},
     "seed-meridian-ad": {"brand": "Meridian", "name": "Meridian signups"},
+    "seed-verdano-ad": {"brand": "Verdano", "name": "Verdano meal boxes"},
+    "seed-wander-ad": {"brand": "Wander", "name": "Wander travel"},
+    "seed-tempo-ad": {"brand": "Tempo", "name": "Tempo memberships"},
+    "seed-marlowe-ad": {"brand": "Marlowe", "name": "Marlowe lifestyle"},
+    "seed-kinbara-ad": {"brand": "Kinbara", "name": "Kinbara brand"},
 }
 
 

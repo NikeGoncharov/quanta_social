@@ -44,7 +44,7 @@ function binLabel(t: number): string {
   return `D${day} ${hh}:${mm}`;
 }
 
-export function DeliveryHistory({ simTime }: { simTime: number | null }) {
+export function DeliveryHistory() {
   const [metric, setMetric] = useState<Metric>("impressions");
   const [rangeKey, setRangeKey] = useState("24h");
   const [points, setPoints] = useState<DeliveryPoint[] | null>(null);
@@ -68,15 +68,15 @@ export function DeliveryHistory({ simTime }: { simTime: number | null }) {
     };
   }, [range.bins]);
 
-  // Uniform-bin series with explicit zeros for empty bins, anchored to the world clock so
-  // quiet stretches (budget-capped nights) show as flat zero, not a skipped gap.
+  // Uniform-bin series with explicit zeros for empty bins. Anchored to the last RECORDED
+  // bin (not the live clock): this is the static history view, so interior quiet stretches
+  // fill as zeros while the right edge stays at real data — no zero-tail projected ahead
+  // of what's been delivered (which at high sim speed would be dozens of empty bins).
   const data = useMemo(() => {
     if (!points || points.length === 0) return [];
     const by = new Map(points.map((p) => [p.t, p]));
-    const lastData = points[points.length - 1].t;
-    const anchor = simTime != null ? Math.floor(simTime / 60 / BIN) * BIN : lastData;
-    const end = Math.max(anchor, lastData);
-    const first = Math.floor(points[0].t / BIN) * BIN;
+    const end = points[points.length - 1].t;
+    const first = points[0].t;
     const start = Math.max(end - (range.bins - 1) * BIN, first);
     const out: { t: number; v: number }[] = [];
     for (let t = start; t <= end; t += BIN) {
@@ -84,7 +84,7 @@ export function DeliveryHistory({ simTime }: { simTime: number | null }) {
       out.push({ t, v: p ? p[metric] : 0 });
     }
     return out;
-  }, [points, metric, simTime, range.bins]);
+  }, [points, metric, range.bins]);
 
   return (
     <div className="card panel chart-card">

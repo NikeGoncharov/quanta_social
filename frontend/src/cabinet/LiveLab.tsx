@@ -42,7 +42,7 @@ export default function LiveLab() {
       <KpiTiles points={points} simTime={status?.sim_time ?? null} />
 
       <div className="dash-row">
-        <DeliveryHistory simTime={status?.sim_time ?? null} />
+        <DeliveryHistory />
         <MarketPulse status={status} />
       </div>
 

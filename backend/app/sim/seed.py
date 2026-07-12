@@ -157,17 +157,19 @@ async def ensure_seed_campaigns(session) -> None:
     if already:
         return
 
-    session.add(
-        AdvertiserAccount(
-            id=DEFAULT_ACCOUNT_ID, name=DEFAULT_ACCOUNT_NAME, is_demo=False, created_at=0.0
-        )
-    )
+    async def _ensure_account(account_id, name, *, is_demo):
+        # Accounts outlive campaigns (deleting a campaign leaves its account), so re-seeding
+        # an emptied DB must not blindly re-insert an existing account PK -> IntegrityError.
+        if await session.get(AdvertiserAccount, account_id) is None:
+            session.add(
+                AdvertiserAccount(id=account_id, name=name, is_demo=is_demo, created_at=0.0)
+            )
+
+    await _ensure_account(DEFAULT_ACCOUNT_ID, DEFAULT_ACCOUNT_NAME, is_demo=False)
     for ln in seed_lines():
         label = LINE_LABELS.get(ln.ad_id, {})
         brand = label.get("brand", ln.creative.brand_name)
-        session.add(
-            AdvertiserAccount(id=ln.account_id, name=brand, is_demo=True, created_at=0.0)
-        )
+        await _ensure_account(ln.account_id, brand, is_demo=True)
         session.add(
             Campaign(
                 id=ln.campaign_id,

@@ -45,6 +45,12 @@ export function TimeseriesChart({ campaignId }: { campaignId?: string }) {
   const range = RANGES.find((r) => r.key === rangeKey)!;
   const active = METRICS.find((m) => m.key === metric)!;
 
+  // Clear on a campaign switch (not on a range toggle) so one campaign's curve is never shown
+  // under another while the new fetch is in flight.
+  useEffect(() => {
+    setPoints(null);
+  }, [campaignId]);
+
   useEffect(() => {
     let alive = true;
     const load = () =>

@@ -1,8 +1,24 @@
 """The world loop must pick up cabinet edits by rebuilding its line roster from the DB —
 WITHOUT resetting the running spend / learning state (which is keyed by the stable ids)."""
+from dataclasses import replace
+
 from sqlalchemy import update
 
+from app.adsim.dsp.campaign import FreqCap
+from app.adsim.dsp.targeting import matching_segments
 from app.models import AdSet, Campaign
+
+
+async def test_freq_saturation_accounts_for_per_days(db_runtime):
+    """_freq_saturation must divide the cap by per_days (mirroring pacing), or a multi-day
+    cap can never reach the 'frequency-capped' threshold and the 'why' misclassifies."""
+    rt = db_runtime
+    ln = replace(rt.lines[0], freq_cap=FreqCap(impressions=2, per_days=7))
+    # Fill every matched segment to its per-day ceiling: size * impressions / per_days.
+    for seg in matching_segments(ln.targeting, rt.world):
+        rt.state.freq_shown_today[(ln.campaign_id, seg.id)] = int(seg.size * 2 / 7)
+    sat = rt._freq_saturation(ln)
+    assert sat >= 0.95  # fully saturated -> ~1.0 (the per_days bug would report ~0.14)
 
 
 async def test_reload_preserves_running_state(db_runtime):

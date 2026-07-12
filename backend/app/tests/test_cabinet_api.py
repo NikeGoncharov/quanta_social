@@ -128,6 +128,33 @@ async def test_reporting_timeseries_and_breakdown(cabinet_client):
     assert (await ac.get("/cabinet/reporting/breakdown?dimension=bogus")).status_code == 400
 
 
+async def test_patch_null_is_ignored_not_500(cabinet_client):
+    """An explicit JSON null for a non-nullable field is treated as 'no change', never a 500."""
+    ac, _ = cabinet_client
+    r = await ac.patch("/cabinet/campaigns/seed-nimbus-cmp", json={"daily_budget_usd": None, "name": None})
+    assert r.status_code == 200
+    assert r.json()["daily_budget_usd"] == 500.0  # unchanged
+    assert r.json()["name"] == "Nimbus X launch"
+
+
+async def test_engagement_bid_landscape_uses_human_label(cabinet_client):
+    """The Engagement objective counts clicks but must be LABELLED 'engagements' everywhere,
+    including the bid landscape (not the raw result key 'clicks')."""
+    ac, rt = cabinet_client
+    create = await ac.post(
+        "/cabinet/campaigns",
+        json={
+            "name": "Eng test", "objective": "engagement", "daily_budget_usd": 100, "bid_usd": 0.5,
+            "targeting": {"interests": ["music"]},
+            "creative": {"title": "Vibe", "brand_name": "Engco", "link_url": "https://engco.example"},
+        },
+    )
+    cid = create.json()["campaign_id"]
+    await rt.reload_lines()
+    land = (await ac.get(f"/cabinet/campaigns/{cid}/bid-landscape")).json()
+    assert land["result_label"] == "engagements"
+
+
 async def test_diagnostics_why_and_bid_landscape(cabinet_client):
     ac, _ = cabinet_client
     why = (await ac.get("/cabinet/campaigns/seed-meridian-cmp/why")).json()

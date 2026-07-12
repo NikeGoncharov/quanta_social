@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from ..adsim.dsp.campaign import Line, Targeting
+from ..adsim.dsp.campaign import FreqCap, Line, Targeting
 from ..adsim.models.creative import NativeCreative
 from ..adsim.models.enums import FUNNEL_STAGE, OBJECTIVE_BILLING, Objective
 from ..adsim.money import micros_to_usd, usd_to_micros
@@ -44,10 +44,17 @@ def _domain_from(url: str) -> str:
 
 
 def provisional_line(
-    *, objective: str, targeting: dict, bid_micros: int, daily_budget_micros: int, value_micros: int
+    *,
+    objective: str,
+    targeting: dict,
+    bid_micros: int,
+    daily_budget_micros: int,
+    value_micros: int,
+    freq_cap: FreqCap | None = None,
 ) -> Line:
     """A throwaway Line for the wizard estimate — only the fields the estimate reads matter
-    (objective, targeting, bid, budget, conversion value); the creative is a placeholder."""
+    (objective, targeting, bid, budget, conversion value, freq cap); the creative is a
+    placeholder. The freq cap must be carried so the estimate honors it, matching delivery."""
     obj = Objective(objective)
     return Line(
         ad_id="_estimate",
@@ -64,6 +71,7 @@ def provisional_line(
         creative=NativeCreative(
             title="", body="", cta_text="", brand_name="", main_image_key="", link_url=""
         ),
+        freq_cap=freq_cap,
     )
 
 
@@ -120,30 +128,36 @@ async def create_campaign(session, body: CampaignCreate, *, now: float) -> Campa
 
 def apply_patch(campaign: Campaign, ad_set: AdSet, ad: Ad, patch: CampaignPatch) -> None:
     """Apply only the fields present in the request. Objective is immutable in v1 (it changes
-    billing / learning semantics), so it is not patchable."""
+    billing / learning semantics), so it is not patchable. An explicit JSON null for a
+    non-nullable field is treated as 'no change' (never written), so it can't crash the
+    request; only `freq_cap_impressions` may be nulled — to clear the cap."""
     fields = patch.model_dump(exclude_unset=True)
-    if "name" in fields:
+
+    def given(key):
+        return key in fields and fields[key] is not None
+
+    if given("name"):
         campaign.name = fields["name"]
         ad_set.name = f"{fields['name']} — main"
-    if "status" in fields:
+    if given("status"):
         campaign.status = ad_set.status = ad.status = fields["status"]
-    if "daily_budget_usd" in fields:
+    if given("daily_budget_usd"):
         campaign.daily_budget_micros = usd_to_micros(fields["daily_budget_usd"])
-    if "pacing" in fields:
+    if given("pacing"):
         campaign.pacing = fields["pacing"]
-    if "value_usd" in fields:
+    if given("value_usd"):
         campaign.baseline_conv_value_micros = usd_to_micros(fields["value_usd"])
-    if "bid_usd" in fields:
+    if given("bid_usd"):
         ad_set.bid_micros = usd_to_micros(fields["bid_usd"])
-    if "targeting" in fields and patch.targeting is not None:
+    if patch.targeting is not None:
         ad_set.targeting_json = json.dumps(patch.targeting.model_dump())
-    if "creative" in fields and patch.creative is not None:
+    if patch.creative is not None:
         ad.creative_json = json.dumps(patch.creative.model_dump())
         ad.name = patch.creative.title
         ad.adomain = _domain_from(patch.creative.link_url)
-    if "freq_cap_impressions" in fields:
+    if "freq_cap_impressions" in fields:  # None here intentionally clears the cap
         ad_set.freq_cap_impressions = fields["freq_cap_impressions"]
-    if "freq_cap_per_days" in fields:
+    if given("freq_cap_per_days"):
         ad_set.freq_cap_per_days = fields["freq_cap_per_days"]
 
 

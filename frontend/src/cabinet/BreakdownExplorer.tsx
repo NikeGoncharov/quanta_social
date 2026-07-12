@@ -12,18 +12,27 @@ const DIMS: { key: string; label: string }[] = [
   { key: "gender", label: "Gender" },
 ];
 
+const REFRESH_MS = 8000;
+
 export function BreakdownExplorer({ campaignId, window = 1440 }: { campaignId?: string; window?: number }) {
   const [dim, setDim] = useState("interest");
   const [rows, setRows] = useState<BreakdownRow[]>([]);
 
   useEffect(() => {
     let alive = true;
-    cabinetApi
-      .breakdown(dim, campaignId, window)
-      .then((r) => alive && setRows(r.rows))
-      .catch(() => alive && setRows([]));
+    setRows([]); // clear on scope/dimension change so a fresh campaign never shows another's rows
+    const load = () =>
+      cabinetApi
+        .breakdown(dim, campaignId, window)
+        .then((r) => alive && setRows(r.rows))
+        .catch(() => {});
+    load();
+    // Poll so a just-published campaign's breakdown fills in as the world delivers, instead
+    // of staying stuck on "No delivery yet." until the user clicks another dimension.
+    const id = setInterval(load, REFRESH_MS);
     return () => {
       alive = false;
+      clearInterval(id);
     };
   }, [dim, campaignId, window]);
 

@@ -44,3 +44,25 @@ async def test_load_lines_skips_paused_and_draft(temp_session_maker):
     assert "seed-nimbus-cmp" not in ids  # paused -> out of the engine
     assert "seed-lumen-cmp" not in ids  # draft -> out of the engine
     assert "seed-voltmatic-cmp" in ids and "seed-meridian-cmp" in ids
+
+
+async def test_reseed_is_safe_when_accounts_survive(temp_session_maker):
+    """Deleting every campaign leaves the accounts behind; a restart then re-seeds the empty
+    campaign set. The seeder must NOT blindly re-insert the surviving account PKs (that would
+    IntegrityError and crash startup)."""
+    from sqlalchemy import delete
+
+    from app.models import Ad, AdSet, Campaign
+    from app.sim.seed import ensure_seed_campaigns
+
+    async with temp_session_maker() as s:
+        await ensure_seed_campaigns(s)
+        await s.commit()
+        await s.execute(delete(Ad))
+        await s.execute(delete(AdSet))
+        await s.execute(delete(Campaign))  # accounts intentionally left behind
+        await s.commit()
+        await ensure_seed_campaigns(s)  # must not raise on the surviving account PKs
+        await s.commit()
+        built, _ = await load_lines(s)
+    assert len(built) == 4  # campaigns restored

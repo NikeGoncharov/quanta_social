@@ -167,7 +167,12 @@ export default function CampaignsGrid() {
                           aria-checked={r.status === "active"}
                           tabIndex={0}
                           onClick={() => toggleStatus(r)}
-                          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && toggleStatus(r)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault(); // Space would otherwise scroll the page
+                              toggleStatus(r);
+                            }
+                          }}
                           title={r.status === "active" ? "Pause" : "Activate"}
                         >
                           <span className={`switch ${r.status === "active" ? "on" : ""}`} />

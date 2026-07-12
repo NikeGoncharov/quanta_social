@@ -60,6 +60,14 @@ _RESULT_KEY = {
     Objective.ENGAGEMENT: "clicks",
     Objective.CONVERSIONS: "conversions",
 }
+# Human noun for a "result" per objective (Engagement counts clicks but reads "engagements");
+# kept separate from _RESULT_KEY so the UI label matches every other cabinet surface.
+_RESULT_LABEL = {
+    Objective.AWARENESS: "impressions",
+    Objective.TRAFFIC: "clicks",
+    Objective.ENGAGEMENT: "engagements",
+    Objective.CONVERSIONS: "conversions",
+}
 _BID_LABEL = {
     Objective.AWARENESS: "CPM bid",
     Objective.TRAFFIC: "CPC bid",
@@ -788,35 +796,28 @@ class SimRuntime:
     def _find_line(self, campaign_id: str):
         return next((ln for ln in self.lines if ln.campaign_id == campaign_id), None)
 
-    def estimate_line(self, line, *, seconds: int = SECONDS_PER_SIM_DAY, live: bool = False) -> dict:
-        """Forward delivery estimate for a line, via the same expectation math run_tick uses.
-        A provisional line (wizard) estimates fresh; `live=True` projects a running campaign
-        from its current learning lift and cumulative-impression fatigue."""
-        if not live:
-            return estimate_delivery(self.world, line, seconds=seconds)
-        lift = (
-            learning_lift(self.state.learning_signal.get(line.ad_set_id, 0.0), self.world.learning, None)
-            if line.objective in LEARNING_OBJECTIVES
-            else 1.0
-        )
-
-        def cum_imp_fn(seg_id):
-            return self.state.cum_impressions.get((line.ad_id, seg_id), 0)
-
-        return estimate_delivery(self.world, line, seconds=seconds, lift=lift, cum_imp_fn=cum_imp_fn)
+    def estimate_line(self, line) -> dict:
+        """Forward one-sim-day delivery estimate for a line, integrated against the live world
+        with the same economic helpers run_tick uses — so the estimate honors the same
+        frequency cap, fatigue, learning ramp, pacing and settlement the world will apply."""
+        return estimate_delivery(self.world, line)
 
     def _freq_saturation(self, ln) -> float:
         """Opportunity-weighted share of the targeted audience that has hit today's frequency
         cap (0 when the ad set is uncapped)."""
         if ln.freq_cap is None or ln.freq_cap.impressions <= 0:
             return 0.0
-        cap = ln.freq_cap.impressions
+        # The per-segment daily impression ceiling matches pacing.freq_remaining_impressions:
+        # size * cap / per_days. Dropping per_days here would under-report saturation and the
+        # 'frequency' limiter would never fire for multi-day caps.
+        per_days = max(1, ln.freq_cap.per_days)
         num = den = 0.0
         for seg in matching_segments(ln.targeting, self.world):
             if seg.size <= 0:
                 continue
+            cap_total = seg.size * ln.freq_cap.impressions / per_days
             shown = self.state.freq_shown_today.get((ln.campaign_id, seg.id), 0)
-            num += min(1.0, shown / (cap * seg.size)) * seg.size
+            num += min(1.0, shown / cap_total) * seg.size if cap_total > 0 else 0.0
             den += seg.size
         return round(num / den, 4) if den else 0.0
 
@@ -870,7 +871,7 @@ class SimRuntime:
         for m in multipliers:
             scaled = replace(ln, bid_micros=int(ln.bid_micros * m))
             mkt = self._line_market(scaled)
-            est = self.estimate_line(scaled, live=True)
+            est = self.estimate_line(scaled)
             points.append(
                 {
                     "multiplier": m,
@@ -887,7 +888,7 @@ class SimRuntime:
             "objective": ln.objective.value,
             "current_bid": round(micros_to_usd(ln.bid_micros), 2),
             "bid_label": _BID_LABEL[ln.objective],
-            "result_label": result_key,
+            "result_label": _RESULT_LABEL[ln.objective],
             "points": points,
         }
 

@@ -12,7 +12,8 @@ from ..sim.runtime import to_delivery_point
 router = APIRouter(prefix="/cabinet/reporting", tags=["cabinet"])
 
 DIMENSIONS = ("interest", "geo", "age_band", "gender")
-_DELTA_METRICS = ("impressions", "clicks", "conversions", "spend", "revenue", "ctr", "cpa", "roas")
+# Must match the tiles ReportKpis renders, so every tile can show a window-over-window delta.
+_DELTA_METRICS = ("impressions", "clicks", "conversions", "spend", "revenue", "ctr", "roas", "win_rate")
 MAX_WINDOW = 20_160  # ~14 sim-days of minutes
 
 

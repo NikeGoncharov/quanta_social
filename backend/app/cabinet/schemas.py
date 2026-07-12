@@ -61,6 +61,8 @@ class EstimateBody(BaseModel):
     bid_usd: float = Field(gt=0)
     value_usd: float = Field(default=60.0, ge=0)
     targeting: TargetingIn = TargetingIn()
+    freq_cap_impressions: int | None = Field(default=None, ge=1)
+    freq_cap_per_days: int = Field(default=1, ge=1)
 
 
 class AudienceBody(BaseModel):

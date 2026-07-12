@@ -48,3 +48,55 @@ def test_narrow_targeting_smaller_audience():
     broad = estimate_delivery(world, _line(targeting=Targeting(interests=frozenset({"tech", "gaming", "finance"}))))
     narrow = estimate_delivery(world, _line(targeting=Targeting(interests=frozenset({"finance"}), geos=frozenset({"USA"}))))
     assert broad["audience"] > narrow["audience"]
+
+
+def test_estimate_tracks_a_stochastic_run_tick_day():
+    """The glass-box contract: because the estimate replays run_tick, its daily totals must
+    land in the same ballpark as a real (stochastic) full-resolution run_tick day — not the
+    several-fold gap the old flat-snapshot closed form had, and not zero.
+
+    Ground truth is a STOCHASTIC day at 30-sim-second ticks: expectation mode at that fine a
+    resolution would round every tiny per-tick value to zero, but the world draws binomially
+    and accumulates, so this is the honest reference."""
+    from app.adsim.simulation.delivery import run_tick
+    from app.adsim.simulation.state import DeliveryState
+
+    world = load_world()
+    line = _line(objective=Objective.CONVERSIONS, bid_usd=40, budget_usd=100000)  # roomy: not budget-bound
+    est = estimate_delivery(world, line)
+
+    st = DeliveryState()
+    steps = 2880
+    spt = 86_400 / steps
+    imps = clicks = convs = 0
+    for i in range(steps):
+        for d in run_tick(world, [line], st, sim_seconds_per_tick=spt,
+                          day_fraction=min(1.0, (i + 1) / steps), tick_index=i + 1, seed=7, stochastic=True):
+            imps += d.impressions
+            clicks += d.clicks
+            convs += d.conversions
+    assert imps > 0 and convs > 0
+    # Same ballpark (the replay integrates fatigue + the learning ramp); generous bounds keep
+    # it robust to the stochastic sample and the coarse-step resolution difference.
+    assert 0.5 <= est["impressions"] / imps <= 1.7
+    assert 0.4 <= est["conversions"] / convs <= 2.2
+
+
+def test_estimate_honors_frequency_cap():
+    """A tight frequency cap must cut the estimate, exactly as it caps delivery in run_tick —
+    the old closed form ignored the cap entirely."""
+    from app.adsim.dsp.campaign import FreqCap
+
+    world = load_world()
+    base = _line(objective=Objective.AWARENESS, bid_usd=8, budget_usd=1_000_000,
+                 targeting=Targeting(interests=frozenset({"tech"})))
+    uncapped = estimate_delivery(world, base)
+    capped = estimate_delivery(world, replace_freq(base, FreqCap(impressions=1, per_days=1)))
+    assert capped["impressions"] < uncapped["impressions"]
+    # With ~20 opportunities/person/day, a 1/day cap is a hard, large reduction.
+    assert capped["impressions"] <= uncapped["impressions"] * 0.5
+
+
+def replace_freq(line, freq_cap):
+    from dataclasses import replace
+    return replace(line, freq_cap=freq_cap)

@@ -51,8 +51,11 @@ export default function Landing() {
           unfold in the open. No more flying by instruments.
         </p>
         <div className="cta-row">
-          <Link to="/cabinet" className="btn primary lg">
-            Open the live lab →
+          <Link to="/feed" className="btn primary lg">
+            Enter the network →
+          </Link>
+          <Link to="/cabinet" className="btn lg">
+            Open the ad cabinet
           </Link>
         </div>
         <div className="chips">
@@ -63,7 +66,7 @@ export default function Landing() {
             <span className="tag">live</span> RTB inspector
           </span>
           <span className="chip">
-            <span className="tag">soon</span> News feed
+            <span className="tag">live</span> Sponsored feed
           </span>
         </div>
         <div className="status-row">

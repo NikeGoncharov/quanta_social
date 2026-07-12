@@ -16,6 +16,7 @@ export interface Me {
   age_band: string;
   gender: string;
   is_synthetic: boolean;
+  is_guest: boolean;
 }
 
 export interface UserBrief {
@@ -125,6 +126,8 @@ export const socialApi = {
   login: (email: string, password: string) =>
     req<{ access_token: string }>("/auth/login", j({ email, password })),
   logout: () => req<{ status: string }>("/auth/logout", { method: "POST" }),
+  // One-click guest session (Phase 5): a throwaway identity with full sandbox access.
+  guest: () => req<Me>("/demo/guest", { method: "POST" }),
 
   // feed
   feed: (limit = 24) => req<{ items: FeedItem[] }>(`/social/feed?limit=${limit}`),

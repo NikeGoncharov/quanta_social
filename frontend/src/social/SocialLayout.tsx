@@ -57,6 +57,16 @@ export default function SocialLayout() {
         </div>
       </header>
 
+      {me.is_guest && (
+        <div className="sn-guest-banner">
+          <span>
+            You're exploring as a <strong>guest</strong> — full access, but this sandbox resets
+            periodically.
+          </span>
+          <Link to="/register" className="sn-guest-cta">Create an account</Link>
+        </div>
+      )}
+
       <main className="sn-main">
         <Outlet />
       </main>

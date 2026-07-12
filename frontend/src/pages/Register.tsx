@@ -6,16 +6,19 @@ import { useAuth } from "../app/AuthContext";
 import { AuthShell } from "./AuthShell";
 
 export default function Register() {
-  const { me, register } = useAuth();
+  const { me, register, guest } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [handle, setHandle] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [guestBusy, setGuestBusy] = useState(false);
 
   useEffect(() => {
-    if (me) navigate("/feed", { replace: true });
+    // A guest (an authenticated but throwaway session) must still be able to open this form to
+    // create a real account — only a full session is redirected away.
+    if (me && !me.is_guest) navigate("/feed", { replace: true });
   }, [me, navigate]);
 
   async function submit(e: React.FormEvent) {
@@ -33,6 +36,18 @@ export default function Register() {
       setErr(e2 instanceof ApiError ? e2.message : "Could not create account");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function enterGuest() {
+    setGuestBusy(true);
+    setErr(null);
+    try {
+      await guest();
+      navigate("/feed");
+    } catch (e2) {
+      setErr(e2 instanceof ApiError ? e2.message : "Guest mode is unavailable");
+      setGuestBusy(false);
     }
   }
 
@@ -60,6 +75,10 @@ export default function Register() {
           {busy ? "Creating…" : "Create account"}
         </button>
       </form>
+      <div className="auth-or"><span>or</span></div>
+      <button className="btn lg block" onClick={() => void enterGuest()} disabled={guestBusy}>
+        {guestBusy ? "Starting demo…" : "Explore as a guest"}
+      </button>
     </AuthShell>
   );
 }

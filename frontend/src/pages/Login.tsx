@@ -6,15 +6,18 @@ import { useAuth } from "../app/AuthContext";
 import { AuthShell } from "./AuthShell";
 
 export default function Login() {
-  const { me, login } = useAuth();
+  const { me, login, guest } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [guestBusy, setGuestBusy] = useState(false);
 
   useEffect(() => {
-    if (me) navigate("/feed", { replace: true });
+    // Only a FULL session skips the form — a guest must be able to reach sign-in / sign-up to
+    // upgrade their throwaway session into a real account (otherwise this page bounces them).
+    if (me && !me.is_guest) navigate("/feed", { replace: true });
   }, [me, navigate]);
 
   async function submit(e: React.FormEvent) {
@@ -28,6 +31,18 @@ export default function Login() {
       setErr(e2 instanceof ApiError ? e2.message : "Login failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function enterGuest() {
+    setGuestBusy(true);
+    setErr(null);
+    try {
+      await guest();
+      navigate("/feed");
+    } catch (e2) {
+      setErr(e2 instanceof ApiError ? e2.message : "Guest mode is unavailable");
+      setGuestBusy(false);
     }
   }
 
@@ -51,6 +66,10 @@ export default function Login() {
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
+      <div className="auth-or"><span>or</span></div>
+      <button className="btn lg block" onClick={() => void enterGuest()} disabled={guestBusy}>
+        {guestBusy ? "Starting demo…" : "Explore as a guest"}
+      </button>
     </AuthShell>
   );
 }

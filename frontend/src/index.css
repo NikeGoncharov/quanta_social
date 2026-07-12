@@ -336,13 +336,28 @@ a:hover {
 /* --- landing CTA --- */
 .cta-row {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: center;
-  margin-bottom: 26px;
+  margin-bottom: 14px;
 }
 .btn.lg {
   padding: 0.8rem 1.5rem;
   font-size: 1.02rem;
   box-shadow: 0 8px 24px var(--accent-weak);
+}
+.cta-note {
+  text-align: center;
+  font-size: 0.88rem;
+  margin-bottom: 26px;
+}
+.cta-note a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.cta-note a:hover {
+  text-decoration: underline;
 }
 
 /* ===================================================================== */

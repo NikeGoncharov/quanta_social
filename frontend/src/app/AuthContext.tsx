@@ -10,6 +10,7 @@ interface AuthState {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, handle?: string) => Promise<void>;
+  guest: () => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -46,13 +47,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMe(await socialApi.me());
   }, []);
 
+  const guest = useCallback(async () => {
+    // The guest endpoint returns the full Me payload, so no follow-up /auth/me is needed.
+    setMe(await socialApi.guest());
+  }, []);
+
   const logout = useCallback(async () => {
     await socialApi.logout();
     setMe(null);
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ me, loading, login, register, logout, refresh }}>
+    <AuthCtx.Provider value={{ me, loading, login, register, guest, logout, refresh }}>
       {children}
     </AuthCtx.Provider>
   );

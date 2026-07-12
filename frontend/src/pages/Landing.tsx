@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "../api/client";
+import { useAuth } from "../app/AuthContext";
 import { ThemeToggle } from "../app/ThemeToggle";
 import { AtomBackground } from "../components/AtomBackground";
 
@@ -15,6 +16,9 @@ const STATUS_LABEL: Record<ApiStatus, string> = {
 
 export default function Landing() {
   const [status, setStatus] = useState<ApiStatus>("checking");
+  const { me, loading, guest } = useAuth();
+  const navigate = useNavigate();
+  const [entering, setEntering] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -26,6 +30,21 @@ export default function Landing() {
       alive = false;
     };
   }, []);
+
+  // One click into the live demo: reuse an existing session, else mint a guest, then go. On
+  // failure (guest mode off), fall back to the sign-in page.
+  async function enterDemo(dest: string) {
+    if (entering || loading) return; // wait for /auth/me — never mint a guest over a real session
+    if (me) return void navigate(dest);
+    setEntering(dest);
+    try {
+      await guest();
+      navigate(dest);
+    } catch {
+      setEntering(null);
+      navigate("/login");
+    }
+  }
 
   return (
     <>
@@ -51,12 +70,24 @@ export default function Landing() {
           unfold in the open. No more flying by instruments.
         </p>
         <div className="cta-row">
-          <Link to="/feed" className="btn primary lg">
-            Enter the network →
-          </Link>
-          <Link to="/cabinet" className="btn lg">
-            Open the ad cabinet
-          </Link>
+          <button
+            className="btn primary lg"
+            onClick={() => void enterDemo("/feed")}
+            disabled={entering !== null || loading}
+          >
+            {entering === "/feed" ? "Starting demo…" : "Explore the live demo →"}
+          </button>
+          <button
+            className="btn lg"
+            onClick={() => void enterDemo("/cabinet")}
+            disabled={entering !== null || loading}
+          >
+            {entering === "/cabinet" ? "Opening…" : "Open the ad cabinet"}
+          </button>
+        </div>
+        <div className="cta-note muted">
+          No sign-up needed — you'll enter as a guest. {" "}
+          <Link to="/login">Have an account? Sign in</Link>
         </div>
         <div className="chips">
           <span className="chip">

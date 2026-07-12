@@ -132,6 +132,10 @@ export const simApi = {
     req<SimStatus>("/sim/control", { method: "POST", body: JSON.stringify(patch) }),
   delivery: (window = 180) =>
     req<{ points: DeliveryPoint[] }>(`/sim/delivery?window=${window}`),
+  history: (bin = 30, window = 48, campaignId?: string) =>
+    req<{ bin: number; points: DeliveryPoint[] }>(
+      `/sim/history?bin=${bin}&window=${window}${campaignId ? `&campaign_id=${campaignId}` : ""}`
+    ),
   samples: (limit = 40) => req<{ samples: SampleSummary[] }>(`/sim/rtb/samples?limit=${limit}`),
   sample: (id: number) => req<SampleDetail>(`/sim/rtb/samples/${id}`),
   replay: (body: { ad_id?: string; segment_key?: string } = {}) =>

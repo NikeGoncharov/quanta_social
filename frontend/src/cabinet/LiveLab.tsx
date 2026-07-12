@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ThemeToggle } from "../app/ThemeToggle";
 import { useSimStream } from "../hooks/useSimStream";
 import { CampaignTable } from "./CampaignTable";
-import { DeliveryChart } from "./DeliveryChart";
+import { DeliveryHistory } from "./DeliveryChart";
 import { KpiTiles } from "./KpiTiles";
 import { MarketPulse } from "./MarketPulse";
 import { RtbInspector } from "./RtbInspector";
@@ -42,7 +42,7 @@ export default function LiveLab() {
       <KpiTiles points={points} simTime={status?.sim_time ?? null} />
 
       <div className="dash-row">
-        <DeliveryChart points={points} />
+        <DeliveryHistory simTime={status?.sim_time ?? null} />
         <MarketPulse status={status} />
       </div>
 

@@ -69,6 +69,19 @@ async def test_delivery_series(sim_client):
     assert {"t", "impressions", "clicks", "conversions", "spend", "revenue"} <= p.keys()
 
 
+async def test_history_endpoint(sim_client):
+    ac, _ = sim_client
+    r = await ac.get("/sim/history?bin=30&window=48")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bin"] == 30
+    assert body["points"]
+    p = body["points"][0]
+    assert p["t"] % 30 == 0 and p["span"] == 30.0
+    # bin/window are clamped, not errors
+    assert (await ac.get("/sim/history?bin=9999&window=9999")).status_code == 200
+
+
 async def test_rtb_samples_list_and_detail(sim_client):
     ac, _ = sim_client
     r = await ac.get("/sim/rtb/samples")

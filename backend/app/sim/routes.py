@@ -38,6 +38,22 @@ async def sim_delivery(request: Request, window: int = 180, campaign_id: str | N
     return {"points": await rt.delivery_series(window=window, campaign_id=campaign_id)}
 
 
+@router.get("/history")
+async def sim_history(
+    request: Request, bin: int = 30, window: int = 48, campaign_id: str | None = None
+):
+    """Delivery rolled into uniform sim-minute bins — the static, browsable history."""
+    rt = get_runtime(request)
+    bin_minutes = max(1, min(bin, 240))
+    window = max(1, min(window, 400))
+    return {
+        "bin": bin_minutes,
+        "points": await rt.history_series(
+            bin_minutes=bin_minutes, bins=window, campaign_id=campaign_id
+        ),
+    }
+
+
 @router.get("/rtb/samples")
 async def rtb_samples(request: Request, limit: int = 40):
     rt = get_runtime(request)

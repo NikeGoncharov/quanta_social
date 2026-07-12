@@ -1,4 +1,8 @@
-import { useMemo, useState } from "react";
+// Delivery history — the static, browsable half of the dashboard. Uniform 30-sim-minute
+// bins fetched from /sim/history (not the SSE feed): its shape is independent of the sim
+// speed, missing bins render as honest zeros, and longer ranges let you scroll back
+// through sim-days. The LIVE element of the dashboard is the KPI tile row above.
+import { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -10,6 +14,7 @@ import {
 } from "recharts";
 
 import type { DeliveryPoint } from "../api/sim";
+import { simApi } from "../api/sim";
 
 type Metric = "impressions" | "clicks" | "conversions" | "spend" | "revenue";
 
@@ -21,44 +26,101 @@ const METRICS: { key: Metric; label: string; money?: boolean }[] = [
   { key: "revenue", label: "Revenue", money: true },
 ];
 
-function clock(t: number): string {
+const BIN = 30; // sim-minutes per history bin
+const REFRESH_MS = 30_000;
+
+const RANGES: { key: string; label: string; bins: number }[] = [
+  { key: "12h", label: "12h", bins: 24 },
+  { key: "24h", label: "24h", bins: 48 },
+  { key: "3d", label: "3d", bins: 144 },
+  { key: "7d", label: "7d", bins: 336 },
+];
+
+function binLabel(t: number): string {
+  const day = Math.floor(t / 1440) + 1;
   const min = ((t % 1440) + 1440) % 1440;
-  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+  const hh = String(Math.floor(min / 60)).padStart(2, "0");
+  const mm = String(min % 60).padStart(2, "0");
+  return `D${day} ${hh}:${mm}`;
 }
 
-export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
+export function DeliveryHistory({ simTime }: { simTime: number | null }) {
   const [metric, setMetric] = useState<Metric>("impressions");
+  const [rangeKey, setRangeKey] = useState("24h");
+  const [points, setPoints] = useState<DeliveryPoint[] | null>(null);
+  const range = RANGES.find((r) => r.key === rangeKey)!;
   const active = METRICS.find((m) => m.key === metric)!;
 
-  // Buckets carry raw totals but can span >1 sim-minute at fast sim speeds; divide by the
-  // span so the curve is a true per-minute rate and doesn't "jump" when speed changes.
-  const data = useMemo(
-    () => points.map((p) => ({ t: p.t, v: p[metric] / (p.span || 1) })),
-    [points, metric]
-  );
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      simApi
+        .history(BIN, range.bins)
+        .then((r) => {
+          if (alive) setPoints(r.points);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, REFRESH_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [range.bins]);
+
+  // Uniform-bin series with explicit zeros for empty bins, anchored to the world clock so
+  // quiet stretches (budget-capped nights) show as flat zero, not a skipped gap.
+  const data = useMemo(() => {
+    if (!points || points.length === 0) return [];
+    const by = new Map(points.map((p) => [p.t, p]));
+    const lastData = points[points.length - 1].t;
+    const anchor = simTime != null ? Math.floor(simTime / 60 / BIN) * BIN : lastData;
+    const end = Math.max(anchor, lastData);
+    const first = Math.floor(points[0].t / BIN) * BIN;
+    const start = Math.max(end - (range.bins - 1) * BIN, first);
+    const out: { t: number; v: number }[] = [];
+    for (let t = start; t <= end; t += BIN) {
+      const p = by.get(t);
+      out.push({ t, v: p ? p[metric] : 0 });
+    }
+    return out;
+  }, [points, metric, simTime, range.bins]);
 
   return (
     <div className="card panel chart-card">
       <div className="panel-head">
         <div>
-          <h3 className="panel-title">Live delivery</h3>
-          <p className="panel-sub">Aggregated across all campaigns, per sim-minute</p>
+          <h3 className="panel-title">Delivery history</h3>
+          <p className="panel-sub">Totals per 30 sim-minutes · all campaigns</p>
         </div>
-        <div className="seg">
-          {METRICS.map((m) => (
-            <button
-              key={m.key}
-              className={`seg-btn ${m.key === metric ? "on" : ""}`}
-              onClick={() => setMetric(m.key)}
-            >
-              {m.label}
-            </button>
-          ))}
+        <div className="chart-controls">
+          <div className="seg">
+            {RANGES.map((r) => (
+              <button
+                key={r.key}
+                className={`seg-btn ${r.key === rangeKey ? "on" : ""}`}
+                onClick={() => setRangeKey(r.key)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <div className="seg">
+            {METRICS.map((m) => (
+              <button
+                key={m.key}
+                className={`seg-btn ${m.key === metric ? "on" : ""}`}
+                onClick={() => setMetric(m.key)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       <div className="chart-wrap">
-        {points.length === 0 ? (
+        {data.length === 0 ? (
           <div className="chart-empty">Waiting for the world to tick…</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -72,16 +134,16 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis
                 dataKey="t"
-                tickFormatter={clock}
+                tickFormatter={binLabel}
                 tick={{ fill: "var(--text-muted)", fontSize: 12 }}
                 stroke="var(--border)"
-                minTickGap={40}
+                minTickGap={56}
               />
               <YAxis
                 tick={{ fill: "var(--text-muted)", fontSize: 12 }}
                 stroke="var(--border)"
                 width={52}
-                tickFormatter={(v) => (active.money ? `$${fmtRate(v)}` : compact(v))}
+                tickFormatter={(v) => (active.money ? `$${compact(v)}` : compact(v))}
               />
               <Tooltip
                 contentStyle={{
@@ -91,10 +153,10 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
                   color: "var(--text)",
                   fontSize: 13,
                 }}
-                labelFormatter={(t) => `Sim ${clock(Number(t))}`}
+                labelFormatter={(t) => `${binLabel(Number(t))} — ${binLabel(Number(t) + BIN)}`}
                 formatter={(v: number) => [
-                  `${active.money ? "$" : ""}${fmtRate(v)}/min`,
-                  active.label,
+                  `${active.money ? "$" : ""}${compact(v)}`,
+                  `${active.label} / 30 min`,
                 ]}
               />
               <Area
@@ -116,10 +178,6 @@ export function DeliveryChart({ points }: { points: DeliveryPoint[] }) {
 
 function compact(v: number): string {
   if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`;
-  return String(Math.round(v * 10) / 10);
-}
-
-function fmtRate(v: number): string {
   if (v >= 100) return String(Math.round(v));
   return String(Math.round(v * 100) / 100);
 }

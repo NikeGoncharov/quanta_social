@@ -675,6 +675,19 @@ class SimRuntime:
             rows = await persistence.read_delivery(s, window=window, campaign_id=campaign_id)
         return [to_delivery_point(r) for r in rows]
 
+    async def history_series(
+        self, *, bin_minutes: int = 30, bins: int = 48, campaign_id: str | None = None
+    ) -> list[dict]:
+        """Uniform-bin rollup for the static history chart. `span` is the bin width, so
+        clients can still derive rates, but per-bin totals are the natural display."""
+        async with self.session_maker() as s:
+            rows = await persistence.read_history(
+                s, bin_minutes=bin_minutes, bins=bins, campaign_id=campaign_id
+            )
+        for r in rows:
+            r["covered_seconds"] = bin_minutes * 60
+        return [to_delivery_point(r) for r in rows]
+
     async def list_samples(self, *, limit: int = 40) -> list[dict]:
         async with self.session_maker() as s:
             rows = await persistence.list_samples(s, limit=limit)

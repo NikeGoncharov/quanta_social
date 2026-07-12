@@ -426,17 +426,21 @@ a:hover {
 }
 .kpi {
   display: flex;
-  align-items: stretch;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 14px 16px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 12px;
   min-width: 0;
 }
-.kpi-main {
+.kpi-head {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kpi-mid {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
 .kpi-label {
   font-size: 0.78rem;
@@ -445,7 +449,7 @@ a:hover {
   white-space: nowrap;
 }
 .kpi-value {
-  font-size: 1.42rem;
+  font-size: 1.5rem;
   font-weight: 750;
   letter-spacing: -0.02em;
 }
@@ -466,30 +470,25 @@ a:hover {
   color: var(--text-muted);
   font-weight: 500;
 }
-.kpi-side {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: space-between;
-  flex: none;
-}
 .kpi-icon {
   display: inline-grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
   box-shadow: 0 4px 12px var(--accent-weak);
+  flex: none;
 }
 .kpi-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
 }
 .spark {
-  width: 84px;
-  height: 30px;
+  width: 100%;
+  height: 42px;
+  margin-top: 2px;
   overflow: visible;
 }
 .spark-line {
@@ -870,10 +869,16 @@ a:hover {
   line-height: 1.5;
 }
 
-/* --- delivery chart --- */
+/* --- delivery history chart --- */
 .chart-card {
   display: flex;
   flex-direction: column;
+}
+.chart-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 .chart-wrap {
   flex: 1;

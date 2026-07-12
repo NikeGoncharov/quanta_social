@@ -291,6 +291,23 @@ async def test_bucket_span_reflects_sim_speed(temp_session_maker):
     assert fat["span"] == 30.0  # 1800s / 60 = 30 sim-minutes in one bucket
 
 
+async def test_history_bins_conserve_totals(sim_runtime):
+    """The 30-min history rollup must sum to exactly the same totals as the raw minute
+    buckets, with every bin start aligned to the bin width."""
+    for _ in range(30):
+        sim_runtime.step_once()
+    await sim_runtime.flush(final=True)
+
+    raw = await sim_runtime.delivery_series(window=1000)
+    hist = await sim_runtime.history_series(bin_minutes=30, bins=400)
+    assert hist
+    for p in hist:
+        assert p["t"] % 30 == 0
+        assert p["span"] == 30.0
+    for m in ("auctions", "impressions", "clicks", "conversions"):
+        assert sum(p[m] for p in hist) == sum(p[m] for p in raw)
+
+
 async def test_flush_retains_buckets_on_db_error(sim_runtime, monkeypatch):
     for _ in range(30):
         sim_runtime.step_once()

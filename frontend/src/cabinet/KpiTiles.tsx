@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 import type { DeliveryPoint } from "../api/sim";
 
 const WINDOW = 60; // sim-minutes per comparison window
-const SPARK_POINTS = 48;
+const SPARK_POINTS = 72;
 
 type Dir = "up-good" | "up-bad" | "neutral";
 
@@ -100,19 +100,31 @@ const KPIS: KpiDef[] = [
   },
 ];
 
-function Spark({ values }: { values: number[] }) {
-  if (values.length < 2) return <svg className="spark" viewBox="0 0 100 32" />;
+// A lone extreme burst (e.g. the daily ASAP budget burn) would flatten every other point
+// into a straight line; clip outliers to ~1.6x the 90th percentile so the recent shape
+// stays readable — the clipped burst still reads as a spike touching the top.
+function winsorize(values: number[]): number[] {
+  if (values.length < 8) return values;
+  const sorted = [...values].sort((a, b) => a - b);
+  const cap = sorted[Math.floor(0.9 * (sorted.length - 1))] * 1.6;
+  if (cap <= 0) return values;
+  return values.map((v) => Math.min(v, cap));
+}
+
+function Spark({ values: raw }: { values: number[] }) {
+  if (raw.length < 2) return <svg className="spark" viewBox="0 0 100 36" />;
+  const values = winsorize(raw);
   const max = Math.max(...values);
   const min = Math.min(...values);
   const span = max - min || 1;
   const pts = values.map((v, i) => {
     const x = (i / (values.length - 1)) * 100;
-    const y = 29 - ((v - min) / span) * 26;
+    const y = 33 - ((v - min) / span) * 30;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
   return (
-    <svg className="spark" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden>
-      <polygon points={`0,32 ${pts.join(" ")} 100,32`} className="spark-fill" />
+    <svg className="spark" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden>
+      <polygon points={`0,36 ${pts.join(" ")} 100,36`} className="spark-fill" />
       <polyline points={pts.join(" ")} className="spark-line" />
     </svg>
   );
@@ -154,15 +166,15 @@ export function KpiTiles({ points, simTime }: { points: DeliveryPoint[]; simTime
         const before = coversPrev && prev.length ? k.total(prev) : null;
         return (
           <div key={k.key} className="card kpi">
-            <div className="kpi-main">
+            <div className="kpi-head">
               <span className="kpi-label">{k.label}</span>
+              <span className="kpi-icon">{k.icon}</span>
+            </div>
+            <div className="kpi-mid">
               <span className="kpi-value tnum">{value == null ? "—" : k.fmt(value)}</span>
               <Delta cur={value} prev={before} dir={k.dir} />
             </div>
-            <div className="kpi-side">
-              <span className="kpi-icon">{k.icon}</span>
-              <Spark values={sparkSrc.map(k.point)} />
-            </div>
+            <Spark values={sparkSrc.map(k.point)} />
           </div>
         );
       })}

@@ -89,6 +89,24 @@ async def read_delivery(session, *, window: int = 180, campaign_id: str | None =
     return [dict(r._mapping) for r in reversed(rows)]
 
 
+async def read_history(
+    session, *, bin_minutes: int, bins: int, campaign_id: str | None = None
+) -> list[dict]:
+    """Delivery history rolled up into uniform `bin_minutes`-wide bins (SQLite integer
+    division), newest `bins` bins, ascending. Uniform bins make the series independent of
+    the sim speed's bucket density — the static long-range view of the dashboard."""
+    bin_expr = (DeliveryBucket.bucket_start.op("/")(bin_minutes)).op("*")(bin_minutes)
+    q = select(
+        bin_expr.label("t"),
+        *[func.sum(getattr(DeliveryBucket, m)).label(m) for m in _BUCKET_METRICS],
+    )
+    if campaign_id:
+        q = q.where(DeliveryBucket.campaign_id == campaign_id)
+    q = q.group_by("t").order_by(bin_expr.desc()).limit(bins)
+    rows = (await session.execute(q)).all()
+    return [dict(r._mapping) for r in reversed(rows)]
+
+
 async def today_totals_by_ad(session, *, day_start: int, day_end: int) -> list[dict]:
     """Per-ad delivery totals for buckets in [day_start, day_end) sim-minutes — rehydrates
     the runtime's per-line 'today' counters after a restart."""

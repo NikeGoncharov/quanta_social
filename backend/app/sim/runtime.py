@@ -14,10 +14,15 @@ import asyncio
 import json
 import logging
 import random
+import time
 from dataclasses import dataclass, field, replace
+from uuid import uuid4
 
+from ..adsim.dsp.bidder import build_seatbid, phantom_seat_bids
+from ..adsim.dsp.pacing import freq_remaining_impressions, pace_allowed_spend_micros
 from ..adsim.dsp.strategy import effective_bid_micros
-from ..adsim.dsp.targeting import is_interest_relevant, matching_segments
+from ..adsim.dsp.targeting import is_interest_relevant, matching_segments, targeting_matches
+from ..adsim.exchange import run_auction
 from ..adsim.mathx import clamp, cpm_paid_first_price, cpm_paid_second_price, win_rate
 from ..adsim.materialize import sampled_auction
 from ..adsim.metrics.diagnostics import diagnose
@@ -28,14 +33,16 @@ from ..adsim.models.enums import (
     AuctionType,
     Objective,
 )
-from ..adsim.money import micros_to_usd
+from ..adsim.money import micros_to_usd, spend_micros
 from ..adsim.simulation import segment_model as sm
 from ..adsim.simulation.delivery import run_tick
 from ..adsim.simulation.learning import in_learning, learning_lift, signal_to_exit
 from ..adsim.simulation.state import DeliveryState
+from ..adsim.ssp.request_gen import build_bid_request
 from ..database import async_session_maker
+from ..models import AdClick, AdConversion, AdImpression
 from . import persistence
-from .seed import LINE_LABELS
+from .seed import LINE_LABELS, creative_to_dict
 
 log = logging.getLogger("quanta.sim")
 
@@ -180,6 +187,9 @@ class SimRuntime:
         self._pending_samples: list[dict] = []
         self._sample_seq = 0
         self._rng = random.Random()
+        # Serializes the real sponsored-serving DB read-modify-writes (and their commit) so two
+        # concurrent feed views can't lose a bucket increment or double-record a click.
+        self._real_lock = asyncio.Lock()
 
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
@@ -891,6 +901,223 @@ class SimRuntime:
             "result_label": _RESULT_LABEL[ln.objective],
             "points": points,
         }
+
+    # --- Phase 4: real sponsored serving (the feed's live auction) -----------
+    def _resolve_viewer_segment(self, *, viewer_id, interests, geo, age_band, gender):
+        """Map a real viewer's profile signals to a world Segment — the targetable cell the
+        sponsored auction runs in. Missing/unknown fields fall back deterministically per
+        viewer, so a user without a full profile still spreads across the market (and can be
+        interest-targeted) instead of everyone landing in one cell."""
+        w = self.world
+        h = 0
+        for c in (viewer_id or "anon"):
+            h = (h * 31 + ord(c)) & 0xFFFFFFFF
+
+        def pick(val, opts):
+            return val if val in opts else opts[h % len(opts)]
+
+        interest = next((i for i in (interests or []) if i in w.interests), None) \
+            or w.interests[h % len(w.interests)]
+        seg_id = (
+            f"{interest}|{pick(geo, w.geos)}|"
+            f"{pick(age_band, w.age_bands)}|{pick((gender or '').upper(), w.genders)}"
+        )
+        return w.segments.get(seg_id) or next(iter(w.segments.values()))
+
+    def _bump_today(self, ad_id, *, auctions=0, impressions=0, clicks=0, conversions=0):
+        """Fold real sponsored events into the live per-line 'today' counters — the same tallies
+        step_once maintains from synthetic deltas — so the cabinet's live CTR / avg-CPM /
+        cost-per-result include real delivery (whose spend already lands in state), and match the
+        post-restart rehydration (which sums all sources). Day-guarded like step_once."""
+        if self._today_day != self.sim_day:
+            self._today = {}
+            self._today_day = self.sim_day
+        today = self._today.setdefault(ad_id, dict.fromkeys(TODAY_KEYS, 0))
+        today["auctions"] += auctions
+        today["impressions"] += impressions
+        today["clicks"] += clicks
+        today["conversions"] += conversions
+
+    async def serve_sponsored(
+        self, session, *, viewer_id, interests=None, geo="", age_band="", gender="",
+        exclude_ad_ids=None,
+    ) -> dict | None:
+        """Run a genuine single-opportunity auction for a viewing user across ALL eligible live
+        campaigns plus phantom competitors. If one of our campaigns wins the slot, record a real
+        billed impression — into the same live DeliveryState (spend / fatigue / frequency) and a
+        source='real' delivery bucket as the synthetic world — and return the winning creative to
+        render. Returns None on a no-fill (a phantom won, or nothing eligible): the feed then just
+        shows the organic post, exactly like a real exchange losing the impression."""
+        lines = self.lines  # snapshot for a consistent auction
+        if not lines:
+            return None
+        exclude = exclude_ad_ids or set()
+        seg = self._resolve_viewer_segment(
+            viewer_id=viewer_id, interests=interests, geo=geo, age_band=age_band, gender=gender
+        )
+        df = self.day_fraction
+        self._sample_seq += 1
+        auction_id = f"real-{self._sample_seq}"
+        req = build_bid_request(
+            request_id=auction_id, world_segment=seg, user_id=viewer_id or "anon",
+            floor_micros=self.world.economy.default_floor_micros,
+            auction_type=self.world.economy.auction_type,
+        )
+        seatbids = []
+        line_by_ad = {}
+        for ln in lines:
+            if ln.ad_id in exclude or not targeting_matches(ln.targeting, seg):
+                continue
+            spent = self.state.spent_today_micros.get(ln.ad_id, 0)
+            if ln.daily_budget_micros > 0 and spent >= ln.daily_budget_micros:
+                continue
+            if pace_allowed_spend_micros(ln, spent, df) <= 0:
+                continue
+            shown = self.state.freq_shown_today.get((ln.campaign_id, seg.id), 0)
+            if freq_remaining_impressions(ln, seg, shown) < 1:
+                continue
+            relevant = is_interest_relevant(ln.targeting, seg)
+            lift = (
+                learning_lift(self.state.learning_signal.get(ln.ad_set_id, 0.0), self.world.learning, None)
+                if ln.objective in LEARNING_OBJECTIVES else 1.0
+            )
+            ctr = sm.effective_ctr(
+                seg, relevant, self.state.cum_impressions.get((ln.ad_id, seg.id), 0), self.world
+            )
+            cvr = sm.effective_cvr(seg, relevant, lift, self.world)
+            seatbids.append(build_seatbid(ln, req, ctr, cvr))
+            line_by_ad[ln.ad_id] = ln
+        if not seatbids:
+            return None
+        phantoms = phantom_seat_bids(self.world, seg, req, n=5, rng=self._rng)
+        result = run_auction(req, seatbids + phantoms)
+        if not result.won:
+            return None
+        ln = line_by_ad.get(result.winner.bid.crid)
+        if ln is None:
+            return None  # a phantom outbid us — honest no-fill
+        clearing = result.clearing_micros
+        spend = spend_micros(1, clearing)
+
+        # Hard budget clamp: the auction settled, but honor the daily cap — if this whole
+        # impression wouldn't fit, treat it as a no-fill instead of overshooting the budget,
+        # exactly as the batch path refuses an impression that doesn't fit.
+        spent_before = self.state.spent_today_micros.get(ln.ad_id, 0)
+        if ln.daily_budget_micros > 0 and spent_before + spend > ln.daily_budget_micros:
+            return None
+
+        # Record synchronously into the live state — no await between read and write, so this is
+        # atomic against the world loop and any concurrent feed view on the single event loop.
+        self.state.spent_today_micros[ln.ad_id] = spent_before + spend
+        self.state.spent_lifetime_micros[ln.ad_id] = (
+            self.state.spent_lifetime_micros.get(ln.ad_id, 0) + spend
+        )
+        self.state.cum_impressions[(ln.ad_id, seg.id)] = (
+            self.state.cum_impressions.get((ln.ad_id, seg.id), 0) + 1
+        )
+        self.state.freq_shown_today[(ln.campaign_id, seg.id)] = (
+            self.state.freq_shown_today.get((ln.campaign_id, seg.id), 0) + 1
+        )
+        self._bump_today(ln.ad_id, auctions=1, impressions=1)
+
+        bucket = self._current_bucket()
+        covered = max(1, int(round(self._sim_seconds_per_tick())))
+        imp_id = "imp-" + uuid4().hex[:12]
+        cell = {"interest": seg.interest, "geo": seg.geo, "age_band": seg.age_band, "gender": seg.gender}
+        async with self._real_lock:
+            session.add(AdImpression(
+                id=imp_id, ad_id=ln.ad_id, ad_set_id=ln.ad_set_id, campaign_id=ln.campaign_id,
+                account_id=ln.account_id, viewer_user_id=viewer_id or "anon", segment_key=seg.id,
+                interest=seg.interest, geo=seg.geo, age_band=seg.age_band, gender=seg.gender,
+                clearing_micros=clearing, spend_micros=spend, auction_id=auction_id,
+                bucket_start=bucket, sim_time=self.control.sim_time, created_at=time.time(),
+            ))
+            await persistence.add_real_delivery(
+                session, ad_id=ln.ad_id, ad_set_id=ln.ad_set_id, campaign_id=ln.campaign_id,
+                account_id=ln.account_id, bucket_start=bucket, covered_seconds=covered, cell_key=cell,
+                auctions=1, impressions=1, spend_micros=spend,
+            )
+            await session.commit()
+        label = self._labels.get(ln.ad_id) or LINE_LABELS.get(ln.ad_id, {})
+        return {
+            "impression_id": imp_id,
+            "ad_id": ln.ad_id,
+            "campaign_id": ln.campaign_id,
+            "brand": label.get("brand") or ln.creative.brand_name,
+            "clearing": round(micros_to_usd(clearing), 2),
+            "creative": creative_to_dict(ln.creative),
+        }
+
+    async def record_sponsored_click(self, session, *, impression_id, viewer_id) -> dict | None:
+        """Record a real click on a sponsored post and, by deterministic click-through
+        attribution, roll a possible conversion (drawn against the segment's effective CVR).
+        Both flow into the same DeliveryState (engagement / conversion learning signal), the live
+        'today' counters and the source='real' bucket. Idempotent per impression: the click is
+        claimed and committed under a lock, so a concurrent or repeat click is a no-op."""
+        async with self._real_lock:
+            imp = await session.get(AdImpression, impression_id)
+            if imp is None or imp.viewer_user_id != (viewer_id or "anon"):
+                return None
+            if imp.clicked:
+                return {"clicked": True, "converted": imp.converted, "value_usd": 0.0, "repeat": True}
+            imp.clicked = True
+            now = time.time()
+            clk_id = "clk-" + uuid4().hex[:12]
+            session.add(AdClick(
+                id=clk_id, impression_id=imp.id, ad_id=imp.ad_id, campaign_id=imp.campaign_id,
+                viewer_user_id=imp.viewer_user_id, created_at=now,
+            ))
+            cell = {"interest": imp.interest, "geo": imp.geo, "age_band": imp.age_band, "gender": imp.gender}
+            covered = max(1, int(round(self._sim_seconds_per_tick())))
+            await persistence.add_real_delivery(
+                session, ad_id=imp.ad_id, ad_set_id=imp.ad_set_id, campaign_id=imp.campaign_id,
+                account_id=imp.account_id, bucket_start=imp.bucket_start, covered_seconds=covered,
+                cell_key=cell, clicks=1,
+            )
+            self._bump_today(imp.ad_id, clicks=1)
+
+            cand = next((c for c in self.lines if c.ad_id == imp.ad_id), None)
+            seg = self.world.segments.get(imp.segment_key)
+            converted = False
+            value_micros = 0
+            if cand is not None and seg is not None:
+                # Draw against the PRE-click learning signal — a click must not lift its own
+                # same-event conversion draw (matches run_tick's accrue-after-draw ordering).
+                relevant = is_interest_relevant(cand.targeting, seg)
+                lift = (
+                    learning_lift(self.state.learning_signal.get(cand.ad_set_id, 0.0), self.world.learning, None)
+                    if cand.objective in LEARNING_OBJECTIVES else 1.0
+                )
+                cvr = sm.effective_cvr(seg, relevant, lift, self.world)
+                if self._rng.random() < cvr:
+                    converted = True
+                    value_micros = sm.conversion_value_micros(cand, seg)
+            # Accrue the learning signal AFTER the draw: engagement on the click itself,
+            # conversions on the realized conversion.
+            if cand is not None:
+                if cand.objective == Objective.ENGAGEMENT:
+                    self.state.learning_signal[cand.ad_set_id] = (
+                        self.state.learning_signal.get(cand.ad_set_id, 0.0) + 1
+                    )
+                elif cand.objective == Objective.CONVERSIONS and converted:
+                    self.state.learning_signal[cand.ad_set_id] = (
+                        self.state.learning_signal.get(cand.ad_set_id, 0.0) + 1
+                    )
+            if converted:
+                imp.converted = True
+                session.add(AdConversion(
+                    id="cnv-" + uuid4().hex[:12], click_id=clk_id, impression_id=imp.id,
+                    ad_id=imp.ad_id, campaign_id=imp.campaign_id, viewer_user_id=imp.viewer_user_id,
+                    value_micros=value_micros, created_at=now,
+                ))
+                await persistence.add_real_delivery(
+                    session, ad_id=imp.ad_id, ad_set_id=imp.ad_set_id, campaign_id=imp.campaign_id,
+                    account_id=imp.account_id, bucket_start=imp.bucket_start, covered_seconds=covered,
+                    cell_key=cell, conversions=1, revenue_micros=value_micros,
+                )
+                self._bump_today(imp.ad_id, conversions=1)
+            await session.commit()
+            return {"clicked": True, "converted": converted, "value_usd": round(micros_to_usd(value_micros), 2)}
 
 
 def _sample_detail(row) -> dict:

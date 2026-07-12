@@ -70,6 +70,91 @@ async def upsert_buckets(session, rows: list[dict]) -> None:
     await session.execute(stmt)
 
 
+_BREAKDOWN_METRICS = ("impressions", "clicks", "conversions", "spend_micros", "revenue_micros")
+
+
+def _merge_breakdown(bd: dict, cell_key: dict, delta: dict) -> dict:
+    """Add `delta`'s metrics into each dimension cell named by `cell_key` (interest/geo/
+    age_band/gender -> value), matching the JSON shape the synthetic writer and
+    read_breakdowns use. Mutates and returns `bd`."""
+    for dim, value in cell_key.items():
+        cell = bd.setdefault(dim, {}).setdefault(value, dict.fromkeys(_BREAKDOWN_METRICS, 0))
+        for m in _BREAKDOWN_METRICS:
+            cell[m] = int(cell.get(m, 0) or 0) + int(delta.get(m, 0) or 0)
+    return bd
+
+
+async def add_real_delivery(
+    session,
+    *,
+    ad_id: str,
+    ad_set_id: str,
+    campaign_id: str,
+    account_id: str,
+    bucket_start: int,
+    covered_seconds: int,
+    cell_key: dict,
+    auctions: int = 0,
+    impressions: int = 0,
+    clicks: int = 0,
+    conversions: int = 0,
+    spend_micros: int = 0,
+    revenue_micros: int = 0,
+) -> None:
+    """Additively record a REAL (friend-feed) delivery event into the source='real' bucket for
+    (ad, sim-minute). Unlike the synthetic path — which rewrites a growing in-memory accumulator
+    every flush and so can REPLACE on conflict — real events arrive one at a time, so this
+    read-modify-writes the existing row (merging its breakdowns JSON). Real volume is low, so
+    the extra read is negligible. The row coexists with the synthetic row via the
+    (ad_id, bucket_start, source) unique key, and folds into dashboard totals for free."""
+    delta = {
+        "auctions": auctions, "impressions": impressions, "clicks": clicks,
+        "conversions": conversions, "spend_micros": spend_micros, "revenue_micros": revenue_micros,
+    }
+    row = (
+        await session.execute(
+            select(DeliveryBucket).where(
+                DeliveryBucket.ad_id == ad_id,
+                DeliveryBucket.bucket_start == bucket_start,
+                DeliveryBucket.source == "real",
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        bd = _merge_breakdown({}, cell_key, delta)
+        session.add(
+            DeliveryBucket(
+                ad_id=ad_id, ad_set_id=ad_set_id, campaign_id=campaign_id, account_id=account_id,
+                bucket_start=bucket_start, source="real", covered_seconds=covered_seconds,
+                breakdowns=json.dumps(bd), **delta,
+            )
+        )
+    else:
+        for m in _BUCKET_METRICS:
+            setattr(row, m, getattr(row, m) + delta[m])
+        row.covered_seconds = max(row.covered_seconds, covered_seconds)
+        row.breakdowns = json.dumps(
+            _merge_breakdown(json.loads(row.breakdowns or "{}"), cell_key, delta)
+        )
+
+
+async def read_source_totals(session, *, window: int = 1440, campaign_id: str | None = None) -> dict:
+    """Split delivery totals by source ('synthetic' vs 'real') over the newest `window`
+    sim-minutes — powers the cabinet's 'real vs simulated' badge without a row explosion."""
+    latest = await latest_bucket(session, campaign_id=campaign_id)
+    if latest is None:
+        return {}
+    q = select(
+        DeliveryBucket.source,
+        *[func.sum(getattr(DeliveryBucket, m)).label(m) for m in _BUCKET_METRICS],
+    ).where(DeliveryBucket.bucket_start > latest - window)
+    if campaign_id:
+        q = q.where(DeliveryBucket.campaign_id == campaign_id)
+    q = q.group_by(DeliveryBucket.source)
+    rows = (await session.execute(q)).all()
+    return {r._mapping["source"]: {k: int(r._mapping.get(k) or 0) for k in _BUCKET_METRICS} for r in rows}
+
+
 async def read_delivery(session, *, window: int = 180, campaign_id: str | None = None) -> list[dict]:
     """The aggregate delivery series: metrics summed across ads per sim-minute, newest
     `window` buckets, returned ascending in time."""

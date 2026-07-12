@@ -17,6 +17,9 @@ from app.sim.line_builder import load_lines
 from app.sim.seed import ensure_seed_campaigns
 from app.sim import routes as sim_routes
 from app.cabinet import router as cabinet_router
+from app.auth import router as auth_router
+from app.social import router as social_router
+from app.social.seed import ensure_seed_social
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("quanta")
@@ -31,6 +34,7 @@ async def lifespan(app: FastAPI):
     # stream. Line reloads happen inside the loop whenever a cabinet edit requests one.
     async with async_session_maker() as s:
         await ensure_seed_campaigns(s)
+        await ensure_seed_social(s)
         await s.commit()
     world = load_world()
     runtime = SimRuntime(world, load_lines=load_lines)
@@ -63,6 +67,8 @@ app.add_middleware(
 
 # Routers are mounted here as phases land:
 #   auth · social(profiles/posts/messages) · cabinet(...) · sim(control/inspector/demo) · stream
+app.include_router(auth_router)
+app.include_router(social_router)
 app.include_router(sim_routes.router)
 app.include_router(cabinet_router)
 

@@ -34,9 +34,19 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "30"))
 REFRESH_TOKEN_TTL_DAYS = int(os.getenv("REFRESH_TOKEN_TTL_DAYS", "30"))
 
+# Send auth cookies with the Secure flag only over HTTPS. Defaults on in production
+# (behind Caddy/Cloudflare) and off in local dev over plain HTTP.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true" if IS_PRODUCTION else "false").lower() == "true"
+
 # Registration allowlist (comma-separated emails). Empty list = open (dev only).
 ALLOWED_REGISTRATION_EMAILS = [
     e.strip().lower()
     for e in os.getenv("ALLOWED_REGISTRATION_EMAILS", "").split(",")
     if e.strip()
 ]
+# Fail CLOSED in production: registration is invite-only, so an empty allowlist (a forgotten
+# env var) would silently open sign-up to the world. Mirror the SECRET_KEY guard above.
+if IS_PRODUCTION and not ALLOWED_REGISTRATION_EMAILS:
+    raise RuntimeError(
+        "ALLOWED_REGISTRATION_EMAILS must be set in production (registration is invite-only)"
+    )

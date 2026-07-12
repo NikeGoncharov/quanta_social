@@ -227,3 +227,188 @@ class ReachState(Base):
     __table_args__ = (
         UniqueConstraint("ad_id", "segment_key", name="uq_reach_state"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — the social network. One identity (`users`) spans the social app and
+# the ad cabinet (advertiser_accounts.owner_user_id points here). String PKs and
+# join-by-convention, matching the rest of the schema (no ForeignKeys). Social
+# timestamps are WALL epoch seconds (not sim time) — the network runs in real
+# time even while the ad world is paused. Real ad events (ad_impression /
+# ad_click / ad_conversion) are added alongside the sponsored-feed wiring.
+# ---------------------------------------------------------------------------
+
+
+class User(Base):
+    """A social account. Real users register with email + password; the seeded network is
+    `is_synthetic` (no password, no login). `handle` is the public @username. The same user id
+    can own advertiser accounts, so one person is both a network member and an advertiser."""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)               # "usr-<uuid8>" / "usr-<handle>" (synthetics)
+    email = Column(String, unique=True, index=True, nullable=True)   # null for synthetic / guest
+    handle = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=True)       # null for synthetic / guest (cannot log in)
+    is_synthetic = Column(Boolean, nullable=False, default=False)
+    is_guest = Column(Boolean, nullable=False, default=False)
+    created_at = Column(Float, nullable=False, default=0.0)  # wall epoch
+
+
+class Profile(Base):
+    """1:1 with a user: the display identity plus the interest / geo / demo signals that map a
+    real viewer to a world segment when the feed runs a live sponsored auction. `avatar_seed`
+    drives a deterministic gradient avatar (no uploads in v1); `interests_json` is a JSON array
+    of interest keys drawn from the world's catalog."""
+    __tablename__ = "profiles"
+
+    user_id = Column(String, primary_key=True)
+    display_name = Column(String, nullable=False, default="")
+    avatar_seed = Column(String, nullable=False, default="")
+    bio = Column(String, nullable=False, default="")
+    interests_json = Column(Text, nullable=False, default="[]")   # ["tech","gaming",...]
+    geo = Column(String, nullable=False, default="")              # e.g. "USA" (segment targeting)
+    age_band = Column(String, nullable=False, default="")         # e.g. "25-34"
+    gender = Column(String, nullable=False, default="")           # e.g. "f" / "m" / ""
+
+
+class Follow(Base):
+    """A directed follow edge (follower -> followee). The composite PK makes an edge idempotent;
+    the followee index powers 'followers of X' without a scan."""
+    __tablename__ = "follows"
+
+    follower_id = Column(String, primary_key=True)
+    followee_id = Column(String, primary_key=True)
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_follow_followee", "followee_id"),)
+
+
+class Post(Base):
+    """A text post with an optional stock image key. `body` is plain text (no uploads / markdown
+    in v1). The (author, time) index serves both a profile's posts and the home feed fan-out."""
+    __tablename__ = "posts"
+
+    id = Column(String, primary_key=True)               # "post-<uuid8>"
+    author_id = Column(String, nullable=False)
+    body = Column(Text, nullable=False, default="")
+    image_key = Column(String, nullable=True)           # bundled stock gallery key, optional
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_post_author_time", "author_id", "created_at"),)
+
+
+class Like(Base):
+    """A user's like on a post. Composite PK keeps it idempotent (one like per user per post)."""
+    __tablename__ = "likes"
+
+    user_id = Column(String, primary_key=True)
+    post_id = Column(String, primary_key=True)
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_like_post", "post_id"),)
+
+
+class Comment(Base):
+    """A comment on a post. The (post, time) index returns a post's thread in order."""
+    __tablename__ = "comments"
+
+    id = Column(String, primary_key=True)               # "cmt-<uuid8>"
+    post_id = Column(String, nullable=False)
+    author_id = Column(String, nullable=False)
+    body = Column(Text, nullable=False, default="")
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_comment_post_time", "post_id", "created_at"),)
+
+
+class Message(Base):
+    """A direct message between two users. A conversation is the union of both directions between
+    a pair, ordered by time; `read_at` (null until read) drives unread badges."""
+    __tablename__ = "messages"
+
+    id = Column(String, primary_key=True)               # "msg-<uuid8>"
+    sender_id = Column(String, nullable=False)
+    recipient_id = Column(String, nullable=False)
+    body = Column(Text, nullable=False, default="")
+    created_at = Column(Float, nullable=False, default=0.0)
+    read_at = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_msg_sender", "sender_id", "created_at"),
+        Index("ix_msg_recipient", "recipient_id", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — REAL ad events. When a logged-in user loads their feed, a genuine
+# single-opportunity auction runs (adsim.run_auction) and, if one of our live
+# campaigns wins the slot, a fully materialized impression is recorded here (as
+# opposed to the synthetic delivery the world loop aggregates into buckets).
+# These low-volume rows carry the exact clearing price and the funnel: an
+# impression may gain a click, a click may gain a conversion. The same event
+# ALSO increments a delivery_bucket row under source='real', so the cabinet's
+# dashboards fold real delivery into their totals automatically.
+# ---------------------------------------------------------------------------
+
+
+class AdImpression(Base):
+    """One real, billed impression served into a friend's feed. `clearing_micros` is the price
+    the auction settled at; `spend_micros` is its per-impression cost (clearing / 1000).
+    `bucket_start` pins the sim-minute so a later click/conversion attributes to the same bucket.
+    `clicked` / `converted` make the click and conversion idempotent (one each per impression)."""
+    __tablename__ = "ad_impression"
+
+    id = Column(String, primary_key=True)               # "imp-<uuid8>"
+    ad_id = Column(String, nullable=False)
+    ad_set_id = Column(String, nullable=False)
+    campaign_id = Column(String, nullable=False)
+    account_id = Column(String, nullable=False)
+    viewer_user_id = Column(String, nullable=False)
+    segment_key = Column(String, nullable=False)
+    interest = Column(String, nullable=False, default="")
+    geo = Column(String, nullable=False, default="")
+    age_band = Column(String, nullable=False, default="")
+    gender = Column(String, nullable=False, default="")
+    clearing_micros = Column(Integer, nullable=False, default=0)
+    spend_micros = Column(Integer, nullable=False, default=0)
+    auction_id = Column(String, nullable=False, default="")
+    bucket_start = Column(Integer, nullable=False, default=0)  # sim-minute of the impression
+    sim_time = Column(Float, nullable=False, default=0.0)
+    created_at = Column(Float, nullable=False, default=0.0)    # wall epoch
+    clicked = Column(Boolean, nullable=False, default=False)
+    converted = Column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        Index("ix_imp_viewer_time", "viewer_user_id", "created_at"),
+        Index("ix_imp_campaign_time", "campaign_id", "created_at"),
+    )
+
+
+class AdClick(Base):
+    """A real click on a sponsored post (the viewer tapped the CTA)."""
+    __tablename__ = "ad_click"
+
+    id = Column(String, primary_key=True)               # "clk-<uuid8>"
+    impression_id = Column(String, nullable=False)
+    ad_id = Column(String, nullable=False)
+    campaign_id = Column(String, nullable=False)
+    viewer_user_id = Column(String, nullable=False)
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_click_impression", "impression_id"),)
+
+
+class AdConversion(Base):
+    """A real conversion attributed (deterministic click-through) to a prior click."""
+    __tablename__ = "ad_conversion"
+
+    id = Column(String, primary_key=True)               # "cnv-<uuid8>"
+    click_id = Column(String, nullable=False)
+    impression_id = Column(String, nullable=False)
+    ad_id = Column(String, nullable=False)
+    campaign_id = Column(String, nullable=False)
+    viewer_user_id = Column(String, nullable=False)
+    value_micros = Column(Integer, nullable=False, default=0)
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_conv_impression", "impression_id"),)

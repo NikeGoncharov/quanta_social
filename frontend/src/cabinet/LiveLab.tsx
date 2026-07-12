@@ -1,7 +1,6 @@
-import { Link } from "react-router-dom";
-
-import { ThemeToggle } from "../app/ThemeToggle";
-import { useSimStream } from "../hooks/useSimStream";
+// The "Live" tab: the glass-box dashboard. Chrome (brand, theme, live pill) now lives in the
+// cabinet shell; this page consumes the shared SSE stream via the SimContext.
+import { useSim } from "../hooks/SimContext";
 import { CampaignTable } from "./CampaignTable";
 import { DeliveryHistory } from "./DeliveryChart";
 import { KpiTiles } from "./KpiTiles";
@@ -10,24 +9,10 @@ import { RtbInspector } from "./RtbInspector";
 import { SimControls } from "./SimControls";
 
 export default function LiveLab() {
-  const { status, points, connected } = useSimStream();
+  const { status, points } = useSim();
 
   return (
     <div className="lab">
-      <header className="lab-top">
-        <Link to="/" className="brand">
-          <span className="brand-mark" aria-hidden />
-          Quanta Ads
-        </Link>
-        <div className="lab-top-right">
-          <span className={`pill ${connected ? "ok" : "checking"}`}>
-            <span className="dot" />
-            {connected ? "live" : "connecting…"}
-          </span>
-          <ThemeToggle />
-        </div>
-      </header>
-
       <div className="lab-head">
         <div className="lab-intro">
           <h1 className="lab-title">The glass-box, live</h1>

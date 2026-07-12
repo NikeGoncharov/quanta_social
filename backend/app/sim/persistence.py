@@ -4,6 +4,8 @@ Every function takes an `AsyncSession` so the runtime can bind a temp database i
 Writes are UPSERTs (completed buckets and state mirrors are idempotent); the auction-sample
 table is a ring buffer trimmed to the newest N rows.
 """
+import json
+
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -105,6 +107,52 @@ async def read_history(
     q = q.group_by("t").order_by(bin_expr.desc()).limit(bins)
     rows = (await session.execute(q)).all()
     return [dict(r._mapping) for r in reversed(rows)]
+
+
+# --- cabinet reporting reads -------------------------------------------------
+async def latest_bucket(session, *, campaign_id: str | None = None) -> int | None:
+    """Newest recorded sim-minute (optionally for one campaign) — the anchor for windowed
+    reporting so a quiet 'now' still reports against real delivery, not the live clock."""
+    q = select(func.max(DeliveryBucket.bucket_start))
+    if campaign_id:
+        q = q.where(DeliveryBucket.campaign_id == campaign_id)
+    return (await session.execute(q)).scalar()
+
+
+async def kpi_totals(session, *, start: int, end: int, campaign_id: str | None = None) -> dict:
+    """Summed delivery metrics over the sim-minute range [start, end) (all campaigns or one)."""
+    q = select(
+        *[func.sum(getattr(DeliveryBucket, m)).label(m) for m in _BUCKET_METRICS]
+    ).where(DeliveryBucket.bucket_start >= start, DeliveryBucket.bucket_start < end)
+    if campaign_id:
+        q = q.where(DeliveryBucket.campaign_id == campaign_id)
+    row = (await session.execute(q)).first()
+    m = row._mapping if row else {}
+    return {k: int(m.get(k) or 0) for k in _BUCKET_METRICS}
+
+
+async def read_breakdowns(
+    session, *, dimension: str, campaign_id: str | None = None, window: int = 1440
+) -> list[dict]:
+    """Aggregate the buckets' `breakdowns` JSON along one dimension (interest / geo /
+    age_band / gender) over the newest `window` sim-minutes. Returned per dimension value,
+    unsorted — the caller ranks and USD-normalizes."""
+    latest = await latest_bucket(session, campaign_id=campaign_id)
+    if latest is None:
+        return []
+    q = select(DeliveryBucket.breakdowns).where(DeliveryBucket.bucket_start > latest - window)
+    if campaign_id:
+        q = q.where(DeliveryBucket.campaign_id == campaign_id)
+    rows = (await session.execute(q)).scalars().all()
+    metrics = ("impressions", "clicks", "conversions", "spend_micros", "revenue_micros")
+    agg: dict[str, dict] = {}
+    for raw in rows:
+        dim = json.loads(raw or "{}").get(dimension, {})
+        for value, cell in dim.items():
+            cur = agg.setdefault(value, dict.fromkeys(metrics, 0))
+            for k in metrics:
+                cur[k] += int(cell.get(k, 0) or 0)
+    return [{"value": v, **cells} for v, cells in agg.items()]
 
 
 async def today_totals_by_ad(session, *, day_start: int, day_end: int) -> list[dict]:

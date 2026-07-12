@@ -20,6 +20,84 @@ from sqlalchemy import Boolean, Column, Float, Index, Integer, String, Text, Uni
 from app.database import Base
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 — the advertiser hierarchy the cabinet edits and the world loop
+# delivers. account -> campaign -> ad_set -> ad. IDs are plain strings joined
+# by convention (like the delivery tables — no ForeignKeys), so a flattened
+# `Line` can be rebuilt from these rows and fed to the same pure engine that
+# Phase 2 ran on a hardcoded seed roster.
+#
+# v1 keeps the shape 1 campaign -> 1 ad_set -> 1 ad (the wizard creates the
+# triple atomically): the daily budget then maps cleanly onto the single line,
+# whose spend the engine keys by ad_id. Multi-ad-set budget sharing is v2.
+# ---------------------------------------------------------------------------
+
+
+class AdvertiserAccount(Base):
+    """A buyer: acts as the OpenRTB seat its campaigns bid under. `owner_user_id` is
+    nullable until Phase 4 wires auth; `is_demo` marks the seeded showcase accounts."""
+    __tablename__ = "advertiser_accounts"
+
+    id = Column(String, primary_key=True)               # e.g. "acct-local" / "acct-<uuid8>"
+    owner_user_id = Column(String, nullable=True)       # Phase 4 auth
+    name = Column(String, nullable=False)
+    currency = Column(String, nullable=False, default="USD")
+    is_demo = Column(Boolean, nullable=False, default=False)
+    created_at = Column(Float, nullable=False, default=0.0)  # wall epoch; seeds sort first at 0
+
+
+class Campaign(Base):
+    """The objective + budget + pacing envelope. The objective decides the funnel stage,
+    the billing event, and whether delivery goes through a learning phase."""
+    __tablename__ = "campaigns"
+
+    id = Column(String, primary_key=True)               # "cmp-<uuid8>" / "seed-<slug>-cmp"
+    account_id = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    objective = Column(String, nullable=False)          # awareness | traffic | engagement | conversions
+    status = Column(String, nullable=False, default="active")  # active | paused | draft
+    daily_budget_micros = Column(Integer, nullable=False, default=0)
+    pacing = Column(String, nullable=False, default="even")    # even | asap
+    baseline_conv_value_micros = Column(Integer, nullable=False, default=0)
+    created_at = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (Index("ix_campaign_account", "account_id"),)
+
+
+class AdSet(Base):
+    """The bid + targeting + frequency envelope. `bid_micros` means a CPM (Awareness), a
+    CPC (Traffic/Engagement) or a target CPA (Conversions) — the strategy reads it by
+    the campaign's objective, exactly as the seed roster did."""
+    __tablename__ = "ad_sets"
+
+    id = Column(String, primary_key=True)               # "set-<uuid8>" / "seed-<slug>-set"
+    campaign_id = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="active")
+    bid_micros = Column(Integer, nullable=False, default=0)
+    bid_strategy = Column(String, nullable=False, default="manual")  # BidStrategy value
+    targeting_json = Column(Text, nullable=False, default="{}")      # {interests,geos,age_bands,genders}
+    freq_cap_impressions = Column(Integer, nullable=True)            # None -> no cap
+    freq_cap_per_days = Column(Integer, nullable=False, default=1)
+
+    __table_args__ = (Index("ix_adset_campaign", "campaign_id"),)
+
+
+class Ad(Base):
+    """The creative. `creative_json` is a serialized NativeCreative — the one creative
+    schema shared by the editor, the OpenRTB `adm`, and the sponsored-post renderer."""
+    __tablename__ = "ads"
+
+    id = Column(String, primary_key=True)               # "ad-<uuid8>" / "seed-<slug>-ad"
+    ad_set_id = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="active")
+    creative_json = Column(Text, nullable=False, default="{}")
+    adomain = Column(String, nullable=False, default="")
+
+    __table_args__ = (Index("ix_ad_adset", "ad_set_id"),)
+
+
 class DeliveryBucket(Base):
     """The statistical heart of persistence: one row per (ad, sim-minute, source).
 

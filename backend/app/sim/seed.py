@@ -11,10 +11,21 @@ chosen to each surface a different lesson in the cabinet:
 
 Brands are deliberately fictional (Acme-style), never real advertisers.
 """
+import dataclasses
+import json
+
+from sqlalchemy import func, select
+
 from ..adsim.dsp.campaign import Line, Targeting
 from ..adsim.models.creative import NativeCreative
 from ..adsim.models.enums import OBJECTIVE_BILLING, Objective, Pacing
 from ..adsim.money import usd_to_micros
+from ..models import Ad, AdSet, AdvertiserAccount, Campaign
+
+# The account every user-created campaign lands under until Phase 4 gives each person their
+# own. The seeded showcase campaigns keep their own per-brand demo accounts.
+DEFAULT_ACCOUNT_ID = "acct-local"
+DEFAULT_ACCOUNT_NAME = "My advertiser"
 
 
 def _line(
@@ -130,3 +141,66 @@ LINE_LABELS: dict[str, dict] = {
     "seed-voltmatic-ad": {"brand": "Voltmatic", "name": "Voltmatic traffic"},
     "seed-meridian-ad": {"brand": "Meridian", "name": "Meridian signups"},
 }
+
+
+def creative_to_dict(creative: NativeCreative) -> dict:
+    return dataclasses.asdict(creative)
+
+
+async def ensure_seed_campaigns(session) -> None:
+    """Materialize the canonical seed roster into the DB (once), plus the default user
+    account. Idempotent: if any campaign already exists this is a no-op, so a dev DB carried
+    over from Phase 2 keeps its history and its `seed-*` delivery buckets stay attached (the
+    seeded rows reuse the exact ids `seed_lines()` produced).
+    """
+    already = (await session.execute(select(func.count()).select_from(Campaign))).scalar()
+    if already:
+        return
+
+    session.add(
+        AdvertiserAccount(
+            id=DEFAULT_ACCOUNT_ID, name=DEFAULT_ACCOUNT_NAME, is_demo=False, created_at=0.0
+        )
+    )
+    for ln in seed_lines():
+        label = LINE_LABELS.get(ln.ad_id, {})
+        brand = label.get("brand", ln.creative.brand_name)
+        session.add(
+            AdvertiserAccount(id=ln.account_id, name=brand, is_demo=True, created_at=0.0)
+        )
+        session.add(
+            Campaign(
+                id=ln.campaign_id,
+                account_id=ln.account_id,
+                name=label.get("name", ln.campaign_id),
+                objective=ln.objective.value,
+                status="active",
+                daily_budget_micros=ln.daily_budget_micros,
+                pacing=ln.pacing.value,
+                baseline_conv_value_micros=ln.baseline_conv_value_micros,
+                created_at=0.0,
+            )
+        )
+        session.add(
+            AdSet(
+                id=ln.ad_set_id,
+                campaign_id=ln.campaign_id,
+                name=f"{brand} — main",
+                status="active",
+                bid_micros=ln.bid_micros,
+                bid_strategy="manual",
+                targeting_json=json.dumps(ln.targeting.to_dict()),
+                freq_cap_impressions=(ln.freq_cap.impressions if ln.freq_cap else None),
+                freq_cap_per_days=(ln.freq_cap.per_days if ln.freq_cap else 1),
+            )
+        )
+        session.add(
+            Ad(
+                id=ln.ad_id,
+                ad_set_id=ln.ad_set_id,
+                name=ln.creative.title,
+                status="active",
+                creative_json=json.dumps(creative_to_dict(ln.creative)),
+                adomain=ln.adomain,
+            )
+        )

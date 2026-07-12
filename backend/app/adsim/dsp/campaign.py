@@ -26,6 +26,15 @@ class Targeting:
             genders=frozenset(d.get("genders", []) or []),
         )
 
+    def to_dict(self) -> dict:
+        """Sorted plain-list form for JSON columns / API payloads (round-trips from_dict)."""
+        return {
+            "interests": sorted(self.interests),
+            "geos": sorted(self.geos),
+            "age_bands": sorted(self.age_bands),
+            "genders": sorted(self.genders),
+        }
+
 
 @dataclass(frozen=True)
 class FreqCap:

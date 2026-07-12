@@ -20,6 +20,8 @@ from ..adsim.dsp.strategy import effective_bid_micros
 from ..adsim.dsp.targeting import is_interest_relevant, matching_segments
 from ..adsim.mathx import clamp, cpm_paid_first_price, cpm_paid_second_price, win_rate
 from ..adsim.materialize import sampled_auction
+from ..adsim.metrics.diagnostics import diagnose
+from ..adsim.metrics.estimate import estimate_delivery
 from ..adsim.models.enums import (
     FUNNEL_STAGE,
     LEARNING_OBJECTIVES,
@@ -49,6 +51,21 @@ MINUTES_PER_SIM_DAY = 1_440
 DEFAULT_START_SIM_TIME = 8 * 3600
 BUCKET_METRICS = ("auctions", "impressions", "clicks", "conversions", "spend_micros", "revenue_micros")
 TODAY_KEYS = ("auctions", "impressions", "clicks", "conversions")
+
+# What counts as a "result" per objective, and how the ad-set bid reads — used by the
+# bid-landscape so a projected point shows the metric the advertiser actually optimizes for.
+_RESULT_KEY = {
+    Objective.AWARENESS: "impressions",
+    Objective.TRAFFIC: "clicks",
+    Objective.ENGAGEMENT: "clicks",
+    Objective.CONVERSIONS: "conversions",
+}
+_BID_LABEL = {
+    Objective.AWARENESS: "CPM bid",
+    Objective.TRAFFIC: "CPC bid",
+    Objective.ENGAGEMENT: "Cost / engagement",
+    Objective.CONVERSIONS: "Target CPA",
+}
 
 
 @dataclass
@@ -123,9 +140,19 @@ def to_delivery_point(d: dict) -> dict:
 
 
 class SimRuntime:
-    def __init__(self, world, lines, *, session_maker=None):
+    def __init__(self, world, lines=None, *, session_maker=None, load_lines=None):
+        # `lines` is a static roster (tests pass seed_lines()); `load_lines(session) ->
+        # (lines, labels)` makes the roster DB-backed and hot-reloadable (Phase 3). When a
+        # loader is given the initial list is pulled during _load_or_init_control.
         self.world = world
-        self.lines = lines
+        self.lines = list(lines) if lines is not None else []
+        self._load_lines = load_lines
+        # Display metadata keyed by ad_id (brand / campaign name), from the DB loader. Falls
+        # back to the static seed LINE_LABELS for the seed roster / test path.
+        self._labels: dict[str, dict] = {}
+        # Set by cabinet mutations so the loop rebuilds `self.lines` before the next tick —
+        # new/edited/paused campaigns take effect live without restarting the world.
+        self._lines_dirty = False
         self.state = DeliveryState()
         self.control = Control()
         self.session_maker = session_maker or async_session_maker
@@ -210,6 +237,15 @@ class SimRuntime:
                         await self._idle_wait()
                         last_flush = loop.time()
                         continue
+                    if self._lines_dirty:
+                        # Pick up cabinet edits (new / paused / retargeted campaigns) before
+                        # the tick. A failed reload keeps the current roster and retries.
+                        self._lines_dirty = False
+                        try:
+                            await self.reload_lines()
+                        except Exception:
+                            self._lines_dirty = True
+                            log.exception("line reload failed; keeping current roster")
                     self.step_once()
                     now = loop.time()
                     if now - last_flush >= FLUSH_INTERVAL_S:
@@ -266,6 +302,27 @@ class SimRuntime:
                 self.state.roll_to_day(self.sim_day)
                 await self._rehydrate_state(s)
         self._rebuild_world_density()
+        await self.reload_lines()
+
+    async def reload_lines(self, session=None) -> None:
+        """Rebuild the live line roster from the DB loader (no-op for the static-roster test
+        path). Running state carries over untouched because it is keyed by the stable
+        ad_id / ad_set_id, so a reload never re-spends a budget or resets learning."""
+        if self._load_lines is None:
+            return
+        if session is not None:
+            lines, labels = await self._load_lines(session)
+        else:
+            async with self.session_maker() as s:
+                lines, labels = await self._load_lines(s)
+        self.lines = lines
+        self._labels = labels
+
+    def request_reload(self) -> None:
+        """Cabinet mutations call this after committing: the loop reloads the roster before
+        its next tick (and a new viewer / this wake un-pauses an idle loop to apply it)."""
+        self._lines_dirty = True
+        self._wake.set()
 
     async def _rehydrate_state(self, session) -> None:
         """Restore DeliveryState from the persisted mirrors after a restart. Lifetime spend
@@ -610,7 +667,9 @@ class SimRuntime:
         }
 
     def _line_status(self, ln) -> dict:
-        label = LINE_LABELS.get(ln.ad_id, {})
+        # Prefer the live DB labels (real campaign name / brand); fall back to the static
+        # seed labels for the test path that constructs the runtime with seed_lines().
+        label = self._labels.get(ln.ad_id) or LINE_LABELS.get(ln.ad_id, {})
         budget = ln.daily_budget_micros
         spent = self.state.spent_today_micros.get(ln.ad_id, 0)
         spent_usd = micros_to_usd(spent)
@@ -724,6 +783,113 @@ class SimRuntime:
             await persistence.trim_samples(s, keep=SAMPLE_RING)
             await s.commit()
         return _sample_detail_from_dict(sample)
+
+    # --- cabinet analytics (glass-box reads over live world + state) ----------
+    def _find_line(self, campaign_id: str):
+        return next((ln for ln in self.lines if ln.campaign_id == campaign_id), None)
+
+    def estimate_line(self, line, *, seconds: int = SECONDS_PER_SIM_DAY, live: bool = False) -> dict:
+        """Forward delivery estimate for a line, via the same expectation math run_tick uses.
+        A provisional line (wizard) estimates fresh; `live=True` projects a running campaign
+        from its current learning lift and cumulative-impression fatigue."""
+        if not live:
+            return estimate_delivery(self.world, line, seconds=seconds)
+        lift = (
+            learning_lift(self.state.learning_signal.get(line.ad_set_id, 0.0), self.world.learning, None)
+            if line.objective in LEARNING_OBJECTIVES
+            else 1.0
+        )
+
+        def cum_imp_fn(seg_id):
+            return self.state.cum_impressions.get((line.ad_id, seg_id), 0)
+
+        return estimate_delivery(self.world, line, seconds=seconds, lift=lift, cum_imp_fn=cum_imp_fn)
+
+    def _freq_saturation(self, ln) -> float:
+        """Opportunity-weighted share of the targeted audience that has hit today's frequency
+        cap (0 when the ad set is uncapped)."""
+        if ln.freq_cap is None or ln.freq_cap.impressions <= 0:
+            return 0.0
+        cap = ln.freq_cap.impressions
+        num = den = 0.0
+        for seg in matching_segments(ln.targeting, self.world):
+            if seg.size <= 0:
+                continue
+            shown = self.state.freq_shown_today.get((ln.campaign_id, seg.id), 0)
+            num += min(1.0, shown / (cap * seg.size)) * seg.size
+            den += seg.size
+        return round(num / den, 4) if den else 0.0
+
+    def diagnose_campaign(self, campaign_id: str) -> dict:
+        """The glass-box 'why': the single binding limiter for a live campaign, plus the raw
+        signals behind it (win rate, audience, budget util)."""
+        ln = self._find_line(campaign_id)
+        if ln is None:
+            return {
+                "delivering": False,
+                "limiter": None,
+                "headline": "Not on air",
+                "detail": "This campaign is paused or a draft — activate it to start delivering.",
+                "win_rate": None,
+                "audience": 0,
+                "budget_util": None,
+            }
+        market = self._line_market(ln)
+        spent = self.state.spent_today_micros.get(ln.ad_id, 0)
+        is_learning_obj = ln.objective in LEARNING_OBJECTIVES
+        sig = self.state.learning_signal.get(ln.ad_set_id, 0.0)
+        d = diagnose(
+            win_rate=market["win_rate"],
+            audience_size=market["reach"],
+            spent_today_micros=spent,
+            daily_budget_micros=ln.daily_budget_micros,
+            freq_saturation=self._freq_saturation(ln),
+            in_learning=in_learning(sig, self.world.learning) if is_learning_obj else False,
+            signal_to_exit=signal_to_exit(sig, self.world.learning) if is_learning_obj else 0.0,
+        )
+        return {
+            "delivering": d.delivering,
+            "limiter": d.limiter,
+            "headline": d.headline,
+            "detail": d.detail,
+            "win_rate": market["win_rate"],
+            "audience": market["reach"],
+            "budget_util": round(spent / ln.daily_budget_micros, 4) if ln.daily_budget_micros else None,
+        }
+
+    def bid_landscape(
+        self, campaign_id: str, *, multipliers=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+    ) -> dict | None:
+        """Win rate / paid CPM / projected results across a sweep of bids around the current
+        one — the 'raise the bid to win more' lesson, shown explicitly."""
+        ln = self._find_line(campaign_id)
+        if ln is None:
+            return None
+        result_key = _RESULT_KEY[ln.objective]
+        points = []
+        for m in multipliers:
+            scaled = replace(ln, bid_micros=int(ln.bid_micros * m))
+            mkt = self._line_market(scaled)
+            est = self.estimate_line(scaled, live=True)
+            points.append(
+                {
+                    "multiplier": m,
+                    "bid": round(micros_to_usd(scaled.bid_micros), 2),
+                    "win_rate": mkt["win_rate"],
+                    "est_cpm": mkt["est_cpm"],
+                    "est_impressions": est["impressions"],
+                    "est_results": est[result_key],
+                    "is_current": abs(m - 1.0) < 1e-9,
+                }
+            )
+        return {
+            "campaign_id": campaign_id,
+            "objective": ln.objective.value,
+            "current_bid": round(micros_to_usd(ln.bid_micros), 2),
+            "bid_label": _BID_LABEL[ln.objective],
+            "result_label": result_key,
+            "points": points,
+        }
 
 
 def _sample_detail(row) -> dict:

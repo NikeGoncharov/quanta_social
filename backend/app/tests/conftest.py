@@ -63,3 +63,48 @@ async def sim_client(sim_runtime):
     finally:
         if getattr(app.state, "runtime", None) is sim_runtime:
             del app.state.runtime
+
+
+@pytest_asyncio.fixture
+async def db_runtime(temp_session_maker):
+    """A DB-backed runtime (Phase 3): the seed roster is materialized into the temp DB and
+    the runtime loads its lines from there via load_lines. Loop NOT started — driven by hand.
+    """
+    from app.adsim.world import load_world
+    from app.sim.line_builder import load_lines
+    from app.sim.runtime import SimRuntime
+    from app.sim.seed import ensure_seed_campaigns
+
+    async with temp_session_maker() as s:
+        await ensure_seed_campaigns(s)
+        await s.commit()
+    rt = SimRuntime(load_world(), load_lines=load_lines, session_maker=temp_session_maker)
+    await rt._load_or_init_control()
+    return rt
+
+
+@pytest_asyncio.fixture
+async def cabinet_client(db_runtime, temp_session_maker):
+    """A client for the cabinet API: the runtime and the request-path get_db both bind the
+    SAME temp DB (so a campaign created via the API is seen by the loop and by reporting).
+    Pre-stepped so there is delivery to report on."""
+    from app.database import get_db
+
+    for _ in range(24):
+        db_runtime.step_once()
+    await db_runtime.flush(final=True)
+
+    async def _override_get_db():
+        async with temp_session_maker() as s:
+            yield s
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.state.runtime = db_runtime
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac, db_runtime
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        if getattr(app.state, "runtime", None) is db_runtime:
+            del app.state.runtime

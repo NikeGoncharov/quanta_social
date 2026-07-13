@@ -61,3 +61,12 @@ GUEST_DEMO_ENABLED = os.getenv("GUEST_DEMO_ENABLED", "true").lower() == "true"
 GUEST_TTL_SECONDS = int(os.getenv("GUEST_TTL_SECONDS", str(3 * 60 * 60)))
 # How often the background reaper sweeps for expired guests (default 30 min).
 GUEST_REAP_INTERVAL_SECONDS = int(os.getenv("GUEST_REAP_INTERVAL_SECONDS", str(30 * 60)))
+
+# Abuse guards for the public, unauthenticated /demo/guest endpoint. Each hit writes a User +
+# Profile, and the reaper only clears guests older than the TTL, so unbounded minting could
+# bloat the (shared-host) disk before a sweep. Two cheap backstops: a per-IP sliding-window
+# rate limit, and a hard ceiling on how many guests may exist at once (a distributed spray
+# can't outrun the ceiling). Both are generous for real visitors and env-tunable.
+GUEST_RATE_LIMIT = int(os.getenv("GUEST_RATE_LIMIT", "20"))                    # mints per IP ...
+GUEST_RATE_WINDOW_SECONDS = int(os.getenv("GUEST_RATE_WINDOW_SECONDS", "60"))  # ... per this window
+GUEST_MAX_CONCURRENT = int(os.getenv("GUEST_MAX_CONCURRENT", "500"))           # live-guest ceiling

@@ -12,6 +12,10 @@
 services:
   quanta-backend:
     build: ./backend
+    # container_name is the stable DNS alias the host Caddy (a SEPARATE compose project on the
+    # shared `web` network) resolves — the Caddyfile proxies to `quanta-backend:8000`. Without
+    # it the name would be project-prefixed and cross-project resolution would break.
+    container_name: quanta-backend
     env_file: ./backend/.env
     # UID:GID that owns ./backend/data so SQLite/alembic can write (avoids
     # "attempt to write a readonly database"). Check: ls -n ./backend/data
@@ -24,6 +28,7 @@ services:
 
   quanta-frontend:
     build: ./frontend
+    container_name: quanta-frontend       # DNS alias for the host Caddy (see backend note)
     restart: unless-stopped
     networks:
       - web

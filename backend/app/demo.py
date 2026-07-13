@@ -16,8 +16,8 @@ import random
 import time
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import delete, or_, select
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
@@ -27,8 +27,15 @@ from app.auth import (
     set_auth_cookies,
     _unique_handle,
 )
-from app.config import GUEST_DEMO_ENABLED, GUEST_TTL_SECONDS
+from app.config import (
+    GUEST_DEMO_ENABLED,
+    GUEST_MAX_CONCURRENT,
+    GUEST_RATE_LIMIT,
+    GUEST_RATE_WINDOW_SECONDS,
+    GUEST_TTL_SECONDS,
+)
 from app.database import get_db
+from app.ratelimit import SlidingWindowLimiter, client_ip
 from app.models import (
     Ad,
     AdClick,
@@ -53,6 +60,16 @@ from app.social.seed import AGE_BANDS, GENDERS, GEOS, INTERESTS
 log = logging.getLogger("quanta.demo")
 
 router = APIRouter(prefix="/demo", tags=["demo"])
+
+# Per-IP rate limiter for guest minting. Module-level: one instance per worker, which is
+# authoritative under the single-worker deployment the world loop requires.
+guest_rate_limiter = SlidingWindowLimiter(limit=GUEST_RATE_LIMIT, window=GUEST_RATE_WINDOW_SECONDS)
+
+
+async def _live_guest_count(db: AsyncSession) -> int:
+    return (
+        await db.execute(select(func.count()).select_from(User).where(User.is_guest.is_(True)))
+    ).scalar() or 0
 
 
 # --- guest creation ----------------------------------------------------------
@@ -82,10 +99,22 @@ async def create_guest(db: AsyncSession) -> tuple[User, Profile]:
 
 
 @router.post("/guest", status_code=status.HTTP_201_CREATED)
-async def start_guest(response: Response, db: AsyncSession = Depends(get_db)):
+async def start_guest(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """Mint a guest session and set its auth cookies. Full access, sandboxed, auto-expiring."""
     if not GUEST_DEMO_ENABLED:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guest demo mode is disabled")
+    # Abuse guards for this public, unauthenticated endpoint: a per-IP rate limit, then a global
+    # ceiling on live guests so even a distributed spray can't bloat the shared-host disk.
+    if not guest_rate_limiter.allow(client_ip(request)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many demo sessions from your network. Please wait a minute and try again.",
+        )
+    if await _live_guest_count(db) >= GUEST_MAX_CONCURRENT:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The live demo is at capacity right now. Please try again shortly.",
+        )
     user, profile = await create_guest(db)
     set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
     return public_me(user, profile)

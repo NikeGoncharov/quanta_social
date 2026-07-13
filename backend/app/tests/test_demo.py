@@ -5,11 +5,24 @@ HTTP); the guest-endpoint tests build on `cabinet_client` (runtime + request DB 
 database) plus the seeded social network, exactly like the social API tests.
 """
 import time
+from types import SimpleNamespace
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
 
 from app.models import Comment, Like, Post, User
+from app.ratelimit import SlidingWindowLimiter, client_ip
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _reset_guest_limiter():
+    """The guest rate limiter is a module-level singleton shared across the whole test session
+    (the app is imported once). Reset it before each test so windows never leak between tests."""
+    import app.demo as demo
+
+    demo.guest_rate_limiter.reset()
+    yield
 
 
 async def _count(session, model, *where) -> int:
@@ -108,6 +121,26 @@ async def test_guest_has_full_access(demo_client):
     assert grid.status_code == 200
 
 
+# --- abuse guards (public, unauthenticated endpoint) -------------------------
+async def test_guest_minting_is_rate_limited(demo_client, monkeypatch):
+    ac, _ = demo_client
+    # A tiny window so the test is fast and independent of the production default.
+    monkeypatch.setattr("app.demo.guest_rate_limiter", SlidingWindowLimiter(limit=3, window=60))
+    for _ in range(3):
+        assert (await ac.post("/demo/guest")).status_code == 201
+    blocked = await ac.post("/demo/guest")
+    assert blocked.status_code == 429, "the 4th mint from one IP inside the window is refused"
+
+
+async def test_guest_minting_has_a_global_ceiling(demo_client, monkeypatch):
+    ac, _ = demo_client
+    monkeypatch.setattr("app.demo.GUEST_MAX_CONCURRENT", 1)
+    assert (await ac.post("/demo/guest")).status_code == 201
+    # One guest already lives; the ceiling refuses a second regardless of source IP.
+    at_capacity = await ac.post("/demo/guest")
+    assert at_capacity.status_code == 503
+
+
 # --- the reaper (strictly guest-scoped) --------------------------------------
 async def _make_real_and_guest(temp_session_maker):
     """Seed the network, add one real user, and mint a guest that has authored a post and liked
@@ -185,3 +218,23 @@ async def test_reset_all_guests_clears_the_sandbox(temp_session_maker):
     async with temp_session_maker() as s:
         assert await _count(s, User, User.is_guest.is_(True)) == 0
         assert await _count(s, User, User.is_synthetic.is_(True)) >= 50  # real network intact
+
+
+# --- rate limiter internals --------------------------------------------------
+def test_sliding_window_allows_then_blocks_then_recovers():
+    lim = SlidingWindowLimiter(limit=2, window=10)
+    assert lim.allow("a", now=0.0) is True
+    assert lim.allow("a", now=1.0) is True
+    assert lim.allow("a", now=2.0) is False          # 3rd hit inside the window
+    assert lim.allow("b", now=2.0) is True            # a different key is independent
+    assert lim.allow("a", now=12.0) is True           # the first two hits have aged out
+
+
+@pytest.mark.parametrize("headers,peer,expected", [
+    ({"cf-connecting-ip": "203.0.113.7"}, "10.0.0.1", "203.0.113.7"),   # CF header wins
+    ({"x-forwarded-for": "203.0.113.9, 10.0.0.2"}, "10.0.0.1", "203.0.113.9"),  # first XFF hop
+    ({}, "10.0.0.1", "10.0.0.1"),                                       # falls back to the peer
+])
+def test_client_ip_prefers_the_trustworthy_source(headers, peer, expected):
+    req = SimpleNamespace(headers=headers, client=SimpleNamespace(host=peer))
+    assert client_ip(req) == expected
